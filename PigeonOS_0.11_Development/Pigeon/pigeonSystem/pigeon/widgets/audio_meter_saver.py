@@ -33,6 +33,7 @@ from pathlib import Path
 
 import numpy as np
 
+from pigeon.compositing import apply_layer_opacity as _apply_layer_opacity
 from pigeon.design import DESIGN_H, DESIGN_W
 
 # ---------------------------------------------------------------------------
@@ -929,15 +930,6 @@ def _prune_hidden_meter_shapes(root: ET.Element) -> None:
                     hidden.append((parent, child))
     for parent, child in hidden:
         parent.remove(child)
-
-
-def _apply_layer_opacity(bgra: np.ndarray, op: float) -> np.ndarray:
-    o = max(0.0, min(1.0, float(op)))
-    if o >= 0.999:
-        return bgra
-    out = bgra.astype(np.float32)
-    out[:, :, 3] *= o
-    return np.clip(out, 0, 255).astype(np.uint8)
 
 
 def _rasterize(root: ET.Element) -> np.ndarray:

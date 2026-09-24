@@ -7,6 +7,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from pigeon.design import rect_for_span_top_right_at_cell
+from pigeon.font_cache import load_font
 from pigeon.font_paths import resolve_ui_font_medium, resolve_ui_font_regular
 from pigeon.widgets.clock_calendar import (
     design_clock_calendar_medium_font_point_size,
@@ -37,11 +38,9 @@ def _text_size(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) 
     return r - l, b - t
 
 
-def _load_font(path: str, size: int) -> ImageFont.ImageFont:
-    try:
-        return ImageFont.truetype(path, size)
-    except OSError:
-        return ImageFont.load_default()
+def _load_font(path: str | None, size: int) -> ImageFont.ImageFont:
+    # Cached: text-fitting loops call this for many sizes on every redraw.
+    return load_font(path, size)
 
 
 def _ellipsize(text: str, draw: ImageDraw.ImageDraw, font: ImageFont.ImageFont, max_w: int) -> str:

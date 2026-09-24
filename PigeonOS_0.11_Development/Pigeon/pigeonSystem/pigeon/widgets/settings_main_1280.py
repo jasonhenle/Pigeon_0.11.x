@@ -417,10 +417,9 @@ def _load_font(
         path = resolve_ui_font_semibold() or resolve_ui_font_extrabold()
     else:
         path = resolve_ui_font_extrabold()
-    try:
-        return ImageFont.truetype(str(path), max(6, int(size)))
-    except Exception:
-        return ImageFont.load_default()
+    from pigeon.font_cache import load_font
+
+    return load_font(path, max(6, int(size)))
 
 
 def _fit_font(

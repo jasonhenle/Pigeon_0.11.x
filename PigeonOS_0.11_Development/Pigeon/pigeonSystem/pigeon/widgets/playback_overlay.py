@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from pigeon.font_cache import truetype as _cached_truetype
 from pigeon.compositing import alpha_blend_bgra_over_bgr, cv_resize_interp
 from pigeon.design import get_grid_geometry, rect_for_span_at_cell, rect_for_span_top_right_at_cell
 from pigeon.font_paths import resolve_ui_font_bold, resolve_ui_font_extrabold
@@ -351,7 +352,7 @@ def _fit_font_to_box(text: str, max_w: int, max_h: int) -> ImageFont.ImageFont:
     best = ImageFont.load_default()
     if path:
         try:
-            best = ImageFont.truetype(path, 6)
+            best = _cached_truetype(path, 6)
         except OSError:
             pass
     probe = Image.new("RGBA", (4, 4), (0, 0, 0, 0))
@@ -359,7 +360,7 @@ def _fit_font_to_box(text: str, max_w: int, max_h: int) -> ImageFont.ImageFont:
     while lo <= hi:
         mid = (lo + hi) // 2
         try:
-            f = ImageFont.truetype(path, mid)
+            f = _cached_truetype(path, mid)
         except OSError:
             f = ImageFont.load_default()
         l, t, r, b = draw.textbbox((0, 0), text, font=f)

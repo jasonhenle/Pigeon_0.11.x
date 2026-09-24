@@ -24,6 +24,15 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from pigeon.widgets.search_spinner import (
+    blit_spinner_patch as _blit_spinner_patch,
+    precompute_rotated_patches as _precompute_rotated_patches,
+    rotated_patch_for_angle as _rotated_patch_for_angle,
+)
+from pigeon.widgets.settings_svg_text import _is_hidden as _is_subtree_hidden, _style_prop
+from pigeon.widgets.settings_theme_background import (
+    _transform_rect_corners as _transform_rect_corners_svg,
+)
 from pigeon.compositing import alpha_blend_bgra_over_bgr
 from pigeon.design import DESIGN_H, DESIGN_W, LEGACY_DESIGN_H, LEGACY_DESIGN_W, map_legacy_size, map_legacy_xy
 from pigeon.font_paths import resolve_digital7_font, resolve_ui_font_medium
@@ -2471,77 +2480,6 @@ def _mask_wifi_search_glyph_patch(patch: np.ndarray) -> np.ndarray:
     return out
 
 
-_SEARCH_SPINNER_STEPS = 36
-
-
-def _precompute_rotated_patches(
-    patch: np.ndarray,
-    *,
-    steps: int = _SEARCH_SPINNER_STEPS,
-) -> tuple[np.ndarray, ...]:
-    """Pre-render spinner rotations so animation avoids per-frame warpAffine."""
-    ph, pw = patch.shape[:2]
-    center = (pw * 0.5, ph * 0.5)
-    frames: list[np.ndarray] = []
-    step_deg = 360.0 / max(1, steps)
-    for i in range(steps):
-        angle = i * step_deg
-        matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
-        frames.append(
-            cv2.warpAffine(
-                patch,
-                matrix,
-                (pw, ph),
-                flags=cv2.INTER_LINEAR,
-                borderMode=cv2.BORDER_CONSTANT,
-                borderValue=(0, 0, 0, 0),
-            )
-        )
-    return tuple(frames)
-
-
-def _rotated_patch_for_angle(
-    frames: tuple[np.ndarray, ...],
-    angle_deg: float,
-) -> np.ndarray:
-    if not frames:
-        raise ValueError("spinner frame cache is empty")
-    step_deg = 360.0 / len(frames)
-    idx = int(round(float(angle_deg) / step_deg)) % len(frames)
-    return frames[idx]
-
-
-def _blit_spinner_patch(frame: np.ndarray, patch: np.ndarray, *, cx: int, cy: int) -> None:
-    ph, pw = patch.shape[:2]
-    x0 = cx - pw // 2
-    y0 = cy - ph // 2
-    x1 = x0 + pw
-    y1 = y0 + ph
-    fx0 = max(0, x0)
-    fy0 = max(0, y0)
-    fx1 = min(frame.shape[1], x1)
-    fy1 = min(frame.shape[0], y1)
-    if fx1 <= fx0 or fy1 <= fy0:
-        return
-    sx0 = fx0 - x0
-    sy0 = fy0 - y0
-    sx1 = sx0 + (fx1 - fx0)
-    sy1 = sy0 + (fy1 - fy0)
-    region = frame[fy0:fy1, fx0:fx1]
-    strip = patch[sy0:sy1, sx0:sx1]
-    alpha = strip[:, :, 3:4].astype(np.float32) / 255.0
-    fg = strip[:, :, :3].astype(np.float32)
-    bg = region[:, :, :3].astype(np.float32)
-    blended = np.clip(fg * alpha + bg * (1.0 - alpha), 0, 255).astype(np.uint8)
-    out_a = np.clip(
-        alpha * 255.0 + (1.0 - alpha) * region[:, :, 3:4].astype(np.float32),
-        0,
-        255,
-    ).astype(np.uint8)
-    region[:, :, :3] = blended
-    region[:, :, 3:4] = out_a
-
-
 def _mask_search_glyph_patch(patch: np.ndarray, *, include_dark: bool) -> np.ndarray:
     """Isolate spinner glyph pixels (stroked rings and filled arrow triangles)."""
     out = patch.copy()
@@ -3036,15 +2974,6 @@ def _iter_style_fill_stroke(node: ET.Element) -> tuple[str | None, str | None]:
         if sm:
             stroke = _norm_hex(sm.group(1).strip()) or stroke
     return fill, stroke
-
-
-def _style_prop(style: str | None, prop: str) -> str | None:
-    if not style:
-        return None
-    m = re.search(rf"{re.escape(prop)}\s*:\s*([^;\"']+)", style, re.IGNORECASE)
-    if not m:
-        return None
-    return m.group(1).strip().strip("'\"")
 
 
 def _apply_button_fill(group: ET.Element | None, *, selected: bool, theme: SettingsTheme) -> None:
@@ -4751,18 +4680,6 @@ def _draw_star_masked_circle_overlays(
         _draw_star_masked_circle_stroke(bgra, spec, color_bgr=color)
 
 
-def _is_subtree_hidden(el: ET.Element, parents: dict[ET.Element, ET.Element]) -> bool:
-    cur: ET.Element | None = el
-    while cur is not None:
-        if cur.get("display") == "none":
-            return True
-        style = cur.get("style") or ""
-        if re.search(r"display\s*:\s*none", style, re.IGNORECASE):
-            return True
-        cur = parents.get(cur)
-    return False
-
-
 def _active_background_container(state: MainSettingsState, focused: str) -> str:
     """Which diagonal-stripe ``containerN`` group matches the focused box button."""
     if state.show_network_picker or _needs_wifi_setup(state):
@@ -4799,21 +4716,6 @@ def _parse_svg_matrix(transform: str | None) -> tuple[float, float, float, float
     if not m:
         return None
     return tuple(float(m.group(i)) for i in range(1, 7))
-
-
-def _transform_rect_corners_svg(
-    x: float,
-    y: float,
-    w: float,
-    h: float,
-    matrix: tuple[float, float, float, float, float, float],
-) -> tuple[tuple[float, float], ...]:
-    a, b, c, d, e, f = matrix
-    corners = ((x, y), (x + w, y), (x + w, y + h), (x, y + h))
-    out: list[tuple[float, float]] = []
-    for px, py in corners:
-        out.append((a * px + c * py + e, b * px + d * py + f))
-    return tuple(out)
 
 
 @lru_cache(maxsize=1)

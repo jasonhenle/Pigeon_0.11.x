@@ -18,6 +18,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from pigeon.font_cache import truetype as _cached_truetype
 from pigeon.compositing import alpha_blend_bgra_over_bgr
 from pigeon.design import DESIGN_H, DESIGN_W, GRID_COLS, GRID_ROWS
 from pigeon.grid_overlay import overlay_grid_metrics
@@ -410,13 +411,13 @@ class StatusBarWidget:
         draw = ImageDraw.Draw(probe)
         lo, hi = 6, 120
         try:
-            best = ImageFont.truetype(self._digital7_path, 24)
+            best = _cached_truetype(self._digital7_path, 24)
         except OSError:
             return ImageFont.load_default()
         while lo <= hi:
             mid = (lo + hi) // 2
             try:
-                f = ImageFont.truetype(self._digital7_path, mid)
+                f = _cached_truetype(self._digital7_path, mid)
             except OSError:
                 break
             l, t, r, b = draw.textbbox((0, 0), "00:00:00", font=f)

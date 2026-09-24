@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from pigeon.compositing import alpha_blend_bgra_over_bgr
 from pigeon.design import rect_for_span_at_cell
+from pigeon.font_cache import load_font
 from pigeon.font_paths import resolve_ui_font_bold, resolve_ui_font_medium, resolve_ui_font_regular
 from pigeon.ui_pill import pill_bgra_black
 
@@ -30,12 +31,8 @@ def _pick_font_path() -> str | None:
 
 
 def _load_font(path: str | None, size: int) -> ImageFont.ImageFont:
-    if not path:
-        return ImageFont.load_default()
-    try:
-        return ImageFont.truetype(path, size)
-    except OSError:
-        return ImageFont.load_default()
+    # Cached: text-fitting loops call this for many sizes on every redraw.
+    return load_font(path, size)
 
 
 def _char_bbox(

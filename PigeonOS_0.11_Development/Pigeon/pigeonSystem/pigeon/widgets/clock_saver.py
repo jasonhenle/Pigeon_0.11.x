@@ -22,6 +22,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from pigeon.compositing import apply_layer_opacity as _apply_layer_opacity
 from pigeon.design import (
     DESIGN_H,
     DESIGN_W,
@@ -32,6 +33,7 @@ from pigeon.design import (
     legacy_fit_origin,
     legacy_fit_scale,
 )
+from pigeon.font_cache import load_font
 from pigeon.font_paths import (
     resolve_digital7_font,
     resolve_ui_font_bold,
@@ -522,22 +524,9 @@ def _apply_clock_saver_svg_state(
     return weather_bottom_svg
 
 
-def _apply_layer_opacity(bgra: np.ndarray, op: float) -> np.ndarray:
-    o = max(0.0, min(1.0, float(op)))
-    if o >= 0.999:
-        return bgra
-    out = bgra.astype(np.float32)
-    out[:, :, 3] *= o
-    return np.clip(out, 0, 255).astype(np.uint8)
-
-
 def _load_font(path: str | None, size: int) -> ImageFont.ImageFont:
-    if path:
-        try:
-            return ImageFont.truetype(path, size)
-        except OSError:
-            pass
-    return ImageFont.load_default()
+    # Cached: text-fitting loops call this for many sizes on every redraw.
+    return load_font(path, size)
 
 
 def _char_bbox(

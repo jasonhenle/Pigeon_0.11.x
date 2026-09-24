@@ -110,6 +110,40 @@ class AvReceiverWriteTests(unittest.TestCase):
         self.assertNotEqual(got["address"], "10.0.7.116")
 
 
+class AppStateSharedCacheTests(unittest.TestCase):
+    def test_shared_view_reuses_parse_until_file_changes(self) -> None:
+        from pigeon import app_state
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            path.write_text(json.dumps({"display_par_mode": "off"}), encoding="utf-8")
+            with mock.patch.object(app_state, "state_file", return_value=path):
+                app_state._STATE_TEXT_CACHE = None
+                app_state._STATE_PARSED_CACHE = None
+                with mock.patch.object(
+                    app_state, "read_app_state", wraps=app_state.read_app_state
+                ) as spy:
+                    a = app_state.read_app_state_shared()
+                    b = app_state.read_app_state_shared()
+                    self.assertIs(a, b)
+                    self.assertEqual(spy.call_count, 1)
+                self.assertEqual(a["display_par_mode"], "off")
+                with self.assertRaises(TypeError):
+                    a["display_par_mode"] = "auto"  # type: ignore[index]
+                app_state.write_app_state(display_par_mode="auto")
+                c = app_state.read_app_state_shared()
+                self.assertEqual(c["display_par_mode"], "auto")
+
+    def test_shared_view_missing_file_is_empty(self) -> None:
+        from pigeon import app_state
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "nope.json"
+            with mock.patch.object(app_state, "state_file", return_value=path):
+                app_state._STATE_PARSED_CACHE = None
+                self.assertEqual(dict(app_state.read_app_state_shared()), {})
+
+
 if __name__ == "__main__":
     unittest.main()
 

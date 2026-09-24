@@ -172,7 +172,7 @@ def _join_darwin_corewlan(ssid: str, password: str) -> tuple[bool, str]:
 
 
 def _join_darwin_networksetup(ssid: str, password: str, *, timeout_s: float) -> tuple[bool, str]:
-    iface = _darwin_wifi_interface_name() or _darwin_wifi_interface_legacy()
+    iface = _darwin_wifi_interface_name()
     if not iface:
         return False, "WiFi interface not found."
     try:
@@ -218,29 +218,6 @@ def _join_darwin_networksetup(ssid: str, password: str, *, timeout_s: float) -> 
     if _looks_like_password_error(err):
         return False, "incorrect password"
     return False, "incorrect password"
-
-
-def _darwin_wifi_interface_legacy() -> str:
-    if not shutil.which("networksetup"):
-        return ""
-    try:
-        proc = subprocess.run(
-            ["networksetup", "-listallhardwareports"],
-            capture_output=True,
-            text=True,
-            timeout=8.0,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-    blocks = re.split(r"\n\s*\n", proc.stdout or "")
-    for block in blocks:
-        if "Wi-Fi" not in block and "AirPort" not in block:
-            continue
-        m = re.search(r"Device:\s*(\S+)", block)
-        if m:
-            return m.group(1).strip()
-    return "en0"
 
 
 def _join_linux(ssid: str, password: str, *, timeout_s: float) -> tuple[bool, str]:

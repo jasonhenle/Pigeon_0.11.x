@@ -198,6 +198,19 @@ def restore_bright_artwork_pixels(original: np.ndarray, swapped: np.ndarray) -> 
     return out
 
 
+def apply_layer_opacity(bgra: np.ndarray, op: float) -> np.ndarray:
+    """Return a copy of ``bgra`` with alpha scaled by ``op`` (0–1); RGB untouched.
+
+    Only the alpha plane is converted to float (was the whole 4-channel frame).
+    """
+    o = max(0.0, min(1.0, float(op)))
+    if o >= 0.999:
+        return bgra
+    out = bgra.copy()
+    out[:, :, 3] = (bgra[:, :, 3].astype(np.float32) * o).astype(np.uint8)
+    return out
+
+
 def scale_bgra_rgb(bgra: np.ndarray, rgb_factor: float) -> np.ndarray:
     """Scale BGR channels only; alpha unchanged. Used for idle-dim per-widget tuning."""
     f = float(rgb_factor)

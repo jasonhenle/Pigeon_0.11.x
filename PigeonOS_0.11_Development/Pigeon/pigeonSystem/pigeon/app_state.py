@@ -6,7 +6,8 @@ import copy
 import json
 import uuid
 from pathlib import Path
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Mapping
 
 from pigeon.runtime_paths import pigeon_state_dir
 
@@ -18,6 +19,9 @@ def state_file() -> Path:
 # (mtime_ns, size, raw_text) — read_app_state is called from poll/render hot
 # paths (~60 call sites); stat-validated text cache skips the disk read+decode.
 _STATE_TEXT_CACHE: tuple[int, int, str] | None = None
+# (mtime_ns, size, parsed read-only view) — for per-frame readers that only
+# look values up (UI look, display PAR). Skips json.loads while the file is unchanged.
+_STATE_PARSED_CACHE: tuple[int, int, Mapping[str, Any]] | None = None
 
 
 def read_app_state() -> dict[str, Any]:
@@ -52,6 +56,28 @@ def read_app_state() -> dict[str, Any]:
         return {}
 
 
+def read_app_state_shared() -> Mapping[str, Any]:
+    """Cached, read-only view of state.json for hot read-only callers.
+
+    Unlike :func:`read_app_state` this does not re-parse the JSON on every call;
+    the parsed result is reused until the file's mtime/size changes. The returned
+    mapping is shared — never mutate it (nested values included). Use
+    :func:`read_app_state` when you need a private, mutable copy.
+    """
+    global _STATE_PARSED_CACHE
+    try:
+        st = state_file().stat()
+    except OSError:
+        _STATE_PARSED_CACHE = None
+        return MappingProxyType({})
+    cached = _STATE_PARSED_CACHE
+    if cached is not None and cached[0] == st.st_mtime_ns and cached[1] == st.st_size:
+        return cached[2]
+    view: Mapping[str, Any] = MappingProxyType(read_app_state())
+    _STATE_PARSED_CACHE = (st.st_mtime_ns, st.st_size, view)
+    return view
+
+
 def _parse_state_text_recover(text: str) -> dict[str, Any] | None:
     """Best-effort parse when the file has trailing junk after a valid object."""
     try:
@@ -62,7 +88,7 @@ def _parse_state_text_recover(text: str) -> dict[str, Any] | None:
 
 
 def _atomic_write_state(cur: dict[str, Any]) -> None:
-    global _STATE_TEXT_CACHE
+    global _STATE_TEXT_CACHE, _STATE_PARSED_CACHE
     try:
         p = state_file()
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -70,6 +96,7 @@ def _atomic_write_state(cur: dict[str, Any]) -> None:
         tmp.write_text(json.dumps(cur, indent=2) + "\n", encoding="utf-8")
         tmp.replace(p)
         _STATE_TEXT_CACHE = None
+        _STATE_PARSED_CACHE = None
     except Exception:
         pass
 

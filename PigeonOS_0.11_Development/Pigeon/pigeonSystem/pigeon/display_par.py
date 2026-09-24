@@ -70,9 +70,10 @@ def read_par_mode() -> str:
     if env in _VALID_MODES:
         return env
     try:
-        from pigeon.app_state import read_app_state
+        from pigeon.app_state import read_app_state_shared
 
-        m = str(read_app_state().get("display_par_mode") or "").strip().lower()
+        # Called for every presented frame via apply_par_compensation.
+        m = str(read_app_state_shared().get("display_par_mode") or "").strip().lower()
         if m in _VALID_MODES:
             return m
     except Exception:

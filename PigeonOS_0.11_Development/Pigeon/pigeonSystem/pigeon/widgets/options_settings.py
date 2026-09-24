@@ -106,9 +106,11 @@ def _normalize(raw: object) -> dict[str, Any]:
 
 def read_options() -> dict[str, Any]:
     try:
-        from pigeon.app_state import read_app_state
+        from pigeon.app_state import read_app_state_shared
 
-        return _normalize(read_app_state().get(_STATE_KEY))
+        # Hot path (per-frame UI look); _normalize builds a fresh dict, so the
+        # shared cached view is never mutated.
+        return _normalize(read_app_state_shared().get(_STATE_KEY))
     except Exception:
         return dict(_DEFAULTS)
 
