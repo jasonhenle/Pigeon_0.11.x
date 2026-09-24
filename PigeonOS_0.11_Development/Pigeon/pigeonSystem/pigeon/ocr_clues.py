@@ -155,16 +155,19 @@ def looks_like_ocr_junk(line: str) -> bool:
     """True for glyph noise that must not be sent to TMDb (``S S Sh``).
 
     Real short titles (``It``, ``Up``, ``Us``, ``Her``, ``It 2017``) are not junk.
-    A lone letter or punctuation-only line still is.
+    Titles that mix a short word with real ones (``IT: Welcome to Derry``)
+    are not junk either. A lone letter or punctuation-only line still is.
     """
     words = [re.sub(r"[^A-Za-z0-9]", "", w) for w in (line or "").split()]
     words = [w for w in words if w]
     if not words:
         return True
+    letters = re.sub(r"[^A-Za-z]", "", line or "")
+    if any(len(w) >= 4 for w in words) and len(letters) >= 2:
+        return False
     tiny = sum(1 for w in words if len(w) <= 2)
     if tiny >= 2 and tiny >= len(words) * 0.5:
         return True
-    letters = re.sub(r"[^A-Za-z]", "", line or "")
     return len(letters) < 2
 
 

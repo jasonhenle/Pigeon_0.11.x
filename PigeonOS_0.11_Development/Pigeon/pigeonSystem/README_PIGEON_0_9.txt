@@ -1,7 +1,7 @@
-# PigeonOS 0.10
+# PigeonOS 0.11
 
 **Pigeon** is a fixed-resolution (800×480) “Now Playing” display app.  
-Version **0.10** keeps the `pigeon_0_9.py` entrypoint filename for compatibility.
+Version **0.11** keeps the `pigeon_0_9.py` entrypoint filename for compatibility.
 
 ## What it does
 
@@ -33,8 +33,8 @@ Paths are resolved automatically from the script location plus Desktop / iCloud 
 Preferred (installer launchers):
 
 ```bash
-./installer/run_pigeon_0_10.sh          # Linux / Pi
-./installer/run_pigeon_0_10.command     # macOS
+./installer/run_pigeon_0_11.sh          # Linux / Pi
+./installer/run_pigeon_0_11.command     # macOS
 ```
 
 Or directly from `pigeonSystem/`:

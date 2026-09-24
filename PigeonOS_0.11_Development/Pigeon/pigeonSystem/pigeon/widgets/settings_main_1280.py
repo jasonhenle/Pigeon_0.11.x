@@ -1144,6 +1144,7 @@ def _settings_main_structure_sig(
         str(st.displayed_wifi_ssid() if hasattr(st, "displayed_wifi_ssid") else ""),
         bool(getattr(st, "wifi_logged_out", False)),
         bool(st.wifi_configured),
+        bool(getattr(st, "exit_enabled", True)),
         bool(st.keyboard_open),
         kb_target,
         bool(skip_text_entry),
@@ -1289,7 +1290,7 @@ def render_settings_main_1280_bgra(
         return zones is None or zone_index in zones
 
     exit_sel = focused == "main_exit_button"
-    if _want(0):
+    if _want(0) and bool(getattr(st, "exit_enabled", True)):
         _place_in_zone(
             canvas,
             _exit_root(st, assets_dir=assets_dir, selected=exit_sel, label="EXIT"),

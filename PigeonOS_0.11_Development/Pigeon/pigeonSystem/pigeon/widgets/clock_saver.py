@@ -1510,9 +1510,21 @@ def render_clock_saver_bgra(
     volume: object | None = None,
     line_opacity: float = 1.0,
     include_weather: bool = True,
+    include_seconds: bool = True,
     prefer_digital: bool = False,
 ) -> np.ndarray:
-    """Full 1280×800 BGRA idle face: digital clocksaver or centered clock widget."""
+    """Full 1280×800 BGRA idle face: digital clocksaver or centered clock widget.
+
+    Zone 8 is Date / Weather / Volume / Time. Zone 5 is the seconds track.
+    Pass ``include_seconds=False`` to omit the zone-5 bar (zone-8 crop).
+    """
+    if not prefer_digital:
+        try:
+            from pigeon.auto_widgets import auto_clocksaver_wants_digital
+
+            prefer_digital = auto_clocksaver_wants_digital()
+        except Exception:
+            prefer_digital = False
     if not prefer_digital:
         try:
             from pigeon.widgets.options_settings import clock_widget_analog
@@ -1572,9 +1584,10 @@ def render_clock_saver_bgra(
         weather_bottom=weather_bottom,
         line_opacity=line_opacity,
     )
-    _draw_clock_saver_seconds_bar(
-        framed, now, fill_bgr=(int(color[2]), int(color[1]), int(color[0]))
-    )
+    if include_seconds:
+        _draw_clock_saver_seconds_bar(
+            framed, now, fill_bgr=(int(color[2]), int(color[1]), int(color[0]))
+        )
     return _apply_layer_opacity(framed, layer_opacity)
 
 
@@ -1853,6 +1866,8 @@ def clock_saver_composite_bgra(
     date_anchor_col: int | None = None,
     volume: object | None = None,
     line_opacity: float = 1.0,
+    include_weather: bool = True,
+    include_seconds: bool = True,
 ) -> tuple[
     tuple[np.ndarray, tuple[int, int, int, int]],
     tuple[np.ndarray, tuple[int, int, int, int]],
@@ -1861,17 +1876,100 @@ def clock_saver_composite_bgra(
     Full-frame idle face (zone 9).
 
     Digital options → color-cycled digital clocksaver; analog → centered NP
-    clock widget (with digital HH:MM kept on). Returns ``(full_frame, empty_date)``
+    clock widget (with digital HH:MM kept on). Automatic-widget Clocksaver
+    layouts always use the digital face. Returns ``(full_frame, empty_date)``
     so existing compose call sites that blit both packs keep working.
     ``shadow_bgr`` / date anchors are unused for the digital SVG path.
     """
     _ = (shadow_bgr, date_layer_opacity, date_anchor_row, date_anchor_col)
     t_op = float(layer_opacity if time_layer_opacity is None else time_layer_opacity)
+    prefer_digital = False
+    try:
+        from pigeon.auto_widgets import auto_clocksaver_wants_digital
+
+        prefer_digital = auto_clocksaver_wants_digital()
+    except Exception:
+        prefer_digital = False
     frame = render_clock_saver_bgra(
-        layer_opacity=t_op, volume=volume, line_opacity=line_opacity
+        layer_opacity=t_op,
+        volume=volume,
+        line_opacity=line_opacity,
+        include_weather=include_weather,
+        include_seconds=include_seconds,
+        prefer_digital=prefer_digital,
     )
     full_rect = (0, 0, int(DESIGN_W), int(DESIGN_H))
     return (frame, full_rect), (_EMPTY_PATCH.copy(), (0, 0, 1, 1))
+
+
+def _crop_bgra(
+    src: np.ndarray, rect: tuple[int, int, int, int]
+) -> np.ndarray:
+    x, y, w, h = (int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3]))
+    if src is None or src.size == 0 or w < 1 or h < 1:
+        return np.zeros((max(1, h), max(1, w), 4), dtype=np.uint8)
+    sh, sw = int(src.shape[0]), int(src.shape[1])
+    x0 = max(0, x)
+    y0 = max(0, y)
+    x1 = min(sw, x + w)
+    y1 = min(sh, y + h)
+    out = np.zeros((max(1, h), max(1, w), 4), dtype=np.uint8)
+    if x1 <= x0 or y1 <= y0:
+        return out
+    dx = x0 - x
+    dy = y0 - y
+    patch = src[y0:y1, x0:x1]
+    ph, pw = int(patch.shape[0]), int(patch.shape[1])
+    out[dy : dy + ph, dx : dx + pw] = patch
+    return out
+
+
+def render_zone8_clocksaver_bgra(
+    *,
+    layer_opacity: float = 1.0,
+    volume: object | None = None,
+    line_opacity: float = 1.0,
+    include_weather: bool = True,
+) -> np.ndarray:
+    """Date / weather / volume / time cropped to zone 8 (no seconds bar)."""
+    from pigeon.np_layout import clock_saver_zone8_xywh
+
+    full = render_clock_saver_bgra(
+        layer_opacity=layer_opacity,
+        volume=volume,
+        line_opacity=line_opacity,
+        include_weather=include_weather,
+        include_seconds=False,
+        prefer_digital=True,
+    )
+    return _crop_bgra(full, clock_saver_zone8_xywh())
+
+
+def render_scaled_clock_saver_bgra(
+    width: int,
+    height: int,
+    *,
+    layer_opacity: float = 1.0,
+    volume: object | None = None,
+    line_opacity: float = 1.0,
+    include_weather: bool = True,
+) -> np.ndarray:
+    """Zone 8 + zone 5 clocksaver, letterboxed into ``width``×``height`` (zone 6)."""
+    from pigeon.compositing import scale_uniform_letterbox
+    from pigeon.np_layout import clock_saver_scaled_source_xywh
+
+    tw = max(1, int(width))
+    th = max(1, int(height))
+    full = render_clock_saver_bgra(
+        layer_opacity=layer_opacity,
+        volume=volume,
+        line_opacity=line_opacity,
+        include_weather=include_weather,
+        include_seconds=True,
+        prefer_digital=True,
+    )
+    crop = _crop_bgra(full, clock_saver_scaled_source_xywh())
+    return scale_uniform_letterbox(crop, tw, th)
 
 
 def clear_clock_saver_render_caches() -> None:

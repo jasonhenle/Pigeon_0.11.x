@@ -646,3 +646,69 @@ class DenonTelnetAckTests(unittest.TestCase):
         self.assertTrue(ok, msg)
         self.assertIn("MV67", msg)
         self.assertTrue(any(b"MVUP" in blob for blob in seen))
+
+
+class ReceiverInputLabelTests(unittest.TestCase):
+    def test_si_factory_tokens(self) -> None:
+        from pigeon.receiver_denon import pick_receiver_input_label
+
+        self.assertEqual(pick_receiver_input_label({"SI": "SAT/CBL"}), "SAT/CBL")
+        self.assertEqual(pick_receiver_input_label({"SI": "BD"}), "BLU-RAY")
+        self.assertEqual(pick_receiver_input_label({"SI": "MPLAY"}), "MEDIA PLAYER")
+        self.assertEqual(
+            pick_receiver_input_label({"InputFuncSelect": "HDMI3"}),
+            "HDMI 3",
+        )
+
+    def test_custom_rename_wins_over_si(self) -> None:
+        from pigeon.receiver_denon import pick_receiver_input_label
+
+        self.assertEqual(
+            pick_receiver_input_label({"SI": "SAT/CBL", "SSFUN": "Apple TV"}),
+            "Apple TV",
+        )
+        self.assertEqual(
+            pick_receiver_input_label(
+                {"SI": "SAT/CBL"},
+                renames={"satcbl": "Apple TV"},
+            ),
+            "Apple TV",
+        )
+        self.assertEqual(
+            pick_receiver_input_label(
+                {"SI": "GAME"},
+                renames={"game": "PlayStation 5"},
+            ),
+            "PlayStation 5",
+        )
+
+    def test_parse_functionrename_xml(self) -> None:
+        from pigeon.receiver_denon import parse_denon_source_renames
+
+        xml = """<?xml version="1.0" encoding="utf-8" ?>
+<rx>
+<cmd>
+<functionrename>
+<list>
+<name>CBL/SAT</name>
+<rename>Apple TV        </rename>
+</list>
+<list>
+<name>GAME1</name>
+<rename>PlayStation 5   </rename>
+</list>
+</functionrename>
+</cmd>
+</rx>
+"""
+        parsed = parse_denon_source_renames(xml)
+        self.assertEqual(parsed.get("satcbl"), "Apple TV")
+        self.assertEqual(parsed.get("game"), "PlayStation 5")
+
+    def test_ssfun_parse_from_telnet_line(self) -> None:
+        from pigeon.receiver_denon_telnet import _parse_denon_response_lines
+
+        parsed = _parse_denon_response_lines(["SSFUN SAT/CBL Apple TV"])
+        self.assertEqual(parsed.get("SSFUN_FUNC"), "SAT/CBL")
+        self.assertEqual(parsed.get("SSFUN"), "Apple TV")
+        self.assertEqual(parsed.get("SSFUN_SAT/CBL"), "Apple TV")

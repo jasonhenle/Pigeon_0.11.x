@@ -219,6 +219,52 @@ class MegaProtocolLineTests(unittest.TestCase):
     def test_play_pause_gpio_default_pin(self) -> None:
         self.assertEqual(rs._PLAY_PAUSE_GPIO_BUTTON, 26)
 
+    def test_quadrature_step_decodes_cw_and_ccw(self) -> None:
+        self.assertEqual(rs.quadrature_step(0b00, 0b01), 1)
+        self.assertEqual(rs.quadrature_step(0b01, 0b11), 1)
+        self.assertEqual(rs.quadrature_step(0b00, 0b10), -1)
+        self.assertEqual(rs.quadrature_step(0b00, 0b11), 0)
+
+    def test_quadrature_detent_one_event_per_cycle(self) -> None:
+        state = "idle"
+        cw: list[int] = []
+        for edge in (0, 2, 3, 1, 0):
+            state, step = rs.quadrature_detent(state, edge)
+            if step:
+                cw.append(step)
+        self.assertEqual(cw, [1])
+        self.assertEqual(state, "idle")
+
+        state = "idle"
+        ccw: list[int] = []
+        for edge in (0, 1, 3, 2, 0):
+            state, step = rs.quadrature_detent(state, edge)
+            if step:
+                ccw.append(step)
+        self.assertEqual(ccw, [-1])
+
+        state = "idle"
+        chatter: list[int] = []
+        for edge in (0, 2, 0, 2, 3, 1, 0):
+            state, step = rs.quadrature_detent(state, edge)
+            if step:
+                chatter.append(step)
+        self.assertEqual(chatter, [1])
+
+    def test_poll_helper_script_uses_digital_inputs(self) -> None:
+        script = rs._gpio_poll_encoder_script(
+            17, 27, 22, cw="RIGHT", ccw="LEFT", push="PUSH"
+        )
+        self.assertIn("DigitalInputDevice(17", script)
+        self.assertIn("DigitalInputDevice(27", script)
+        self.assertIn("'RIGHT'", script)
+        self.assertIn("TRANS =", script)
+        self.assertIn("'+1'", script)
+        self.assertNotIn("RotaryEncoder", script)
+        btn = rs._gpio_poll_button_script(26, line="PLAY_PAUSE")
+        self.assertIn("DigitalInputDevice(26", btn)
+        self.assertIn("'PLAY_PAUSE'", btn)
+
 
 class StartListenerEnvTests(unittest.TestCase):
     def test_disabled_by_env_returns_none(self) -> None:

@@ -178,6 +178,40 @@ class ClockSaverSvgTests(unittest.TestCase):
         )
         self.assertEqual(cs._parse_hhmmss_pairs("12:34:56"), ("12", "34", "56"))
 
+    def test_auto_clocksaver_stays_digital_when_analog_option_on(self) -> None:
+        from unittest.mock import patch
+
+        from pigeon.auto_widgets import (
+            CLOCK_SAVER,
+            LAYOUT_ZONE8_CLOCKSAVER,
+            SECONDS,
+            AutoWidgetPlan,
+            set_live_plan,
+        )
+        from pigeon.widgets.options_settings import clock_saver_analog
+
+        plan = AutoWidgetPlan(
+            layout=LAYOUT_ZONE8_CLOCKSAVER,
+            assignments=("", "", "", "", SECONDS),
+            zone8=CLOCK_SAVER,
+        )
+        set_live_plan(plan)
+        try:
+            with patch(
+                "pigeon.widgets.options_settings.clock_widget_analog",
+                return_value=True,
+            ):
+                self.assertFalse(clock_saver_analog())
+                (frame, rect), _ = cs.clock_saver_composite_bgra(shadow_bgr=None)
+                digital = cs.render_clock_saver_bgra(
+                    layer_opacity=1.0, prefer_digital=True
+                )
+            self.assertEqual(frame.shape, digital.shape)
+            self.assertEqual(rect, (0, 0, cs.DESIGN_W, cs.DESIGN_H))
+            self.assertTrue(np.array_equal(frame, digital))
+        finally:
+            set_live_plan(None)
+
     def test_clock_format_analog_is_the_np_widget(self) -> None:
         from unittest.mock import patch
 
@@ -256,6 +290,50 @@ class ClockSaverSecondsBarTests(unittest.TestCase):
         empty = frame[ey + eh // 2, ex + ew // 2, :3]
         self.assertGreater(int(filled.max()), 20)
         self.assertLess(int(empty.max()), 12)
+
+    def test_include_seconds_false_omits_zone5_bar(self) -> None:
+        from datetime import datetime
+        from unittest.mock import patch
+
+        from pigeon.np_layout import (
+            clock_saver_seconds_segment_rects,
+            clock_saver_seconds_track_rect,
+        )
+
+        when = datetime(2026, 1, 1, 10, 30, 15)
+        with (
+            patch(
+                "pigeon.widgets.options_settings.clock_widget_analog",
+                return_value=False,
+            ),
+            patch(
+                "pigeon.widgets.clock_saver._resolve_display_time",
+                return_value=when,
+            ),
+        ):
+            frame = cs.render_clock_saver_bgra(
+                layer_opacity=1.0, include_seconds=False, prefer_digital=True
+            )
+        tx, ty, tw, th, _ = clock_saver_seconds_track_rect()
+        rects = clock_saver_seconds_segment_rects((tx, ty, tw, th))
+        fx, fy, fw, fh = rects[8]
+        filled = frame[fy + fh // 2, fx + fw // 2, :3]
+        self.assertLess(int(filled.max()), 12)
+
+    def test_scaled_clocksaver_fits_zone6(self) -> None:
+        from unittest.mock import patch
+
+        from pigeon.np_layout import NOW_PLAYING_ZONES
+
+        z = NOW_PLAYING_ZONES[6]
+        with patch(
+            "pigeon.widgets.options_settings.clock_widget_analog",
+            return_value=False,
+        ):
+            patch_bgra = cs.render_scaled_clock_saver_bgra(int(z.w), int(z.h))
+        self.assertEqual(patch_bgra.shape[1], int(round(z.w)))
+        self.assertEqual(patch_bgra.shape[0], int(round(z.h)))
+        self.assertEqual(patch_bgra.shape[2], 4)
 
     def test_digital_time_baseline_sits_near_seconds_bar(self) -> None:
         from datetime import datetime
@@ -587,12 +665,40 @@ class ClockSaverTriggerTests(unittest.TestCase):
         self.assertFalse(clock_saver_due_for_pause(True, 29.9))
         self.assertTrue(clock_saver_due_for_pause(True, 30.0))
         self.assertFalse(clock_saver_due_for_pause(False, 90.0))
+        from pigeon.clock_saver_policy import (
+            pausesaver_due_for_clocksaver,
+            pausesaver_hold_from_metadata_class,
+        )
+
+        self.assertFalse(pausesaver_due_for_clocksaver(29.9))
+        self.assertTrue(pausesaver_due_for_clocksaver(30.0))
+        self.assertTrue(pausesaver_hold_from_metadata_class("stopped"))
+        self.assertFalse(pausesaver_hold_from_metadata_class("ok"))
         started = next_paused_since_mono(True, 100.0, 0.0)
         self.assertEqual(started, 100.0)
         self.assertEqual(next_paused_since_mono(True, 125.0, started), 100.0)
         self.assertAlmostEqual(pause_hold_s(True, 129.9, started), 29.9)
         self.assertAlmostEqual(pause_hold_s(True, 130.0, started), 30.0)
         self.assertEqual(next_paused_since_mono(False, 140.0, started), 0.0)
+        from pigeon.clock_saver_policy import player_reports_playing, tick_pause_hold
+
+        self.assertFalse(
+            player_reports_playing("DeviceState.Paused", clock_playing=True)
+        )
+        self.assertFalse(
+            player_reports_playing("DeviceState.Stopped", clock_playing=True)
+        )
+        self.assertTrue(
+            player_reports_playing("DeviceState.Playing", clock_playing=False)
+        )
+        self.assertTrue(player_reports_playing("", clock_playing=True))
+        age, since, last = tick_pause_hold(True, 10.0, 0.0, 0.0)
+        self.assertEqual(since, 10.0)
+        age, since, last = tick_pause_hold(False, 11.0, since, last, grace_s=2.5)
+        self.assertGreater(age, 0.0)
+        age, since, last = tick_pause_hold(False, 14.0, since, last, grace_s=2.5)
+        self.assertEqual(age, 0.0)
+        self.assertEqual(since, 0.0)
         self.assertTrue(
             should_hold_paused_screen(
                 paused_with_content=True,

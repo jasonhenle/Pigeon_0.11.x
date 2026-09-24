@@ -48,8 +48,9 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Iterator, Literal
 
 import numpy as np
 
@@ -90,6 +91,15 @@ Prefer = Literal["auto", "movie", "tv"]
 
 # Session override set by :func:`toggle_tmdb_match_mode` (``None`` = follow env only).
 _tmdb_match_runtime_forgiving: bool | None = None
+_PLAYER_DURATION_S: float | None = None
+_LAST_TRT: dict[str, float | None] = {
+    "player_s": None,
+    "tmdb_s": None,
+    "similarity": None,
+}
+_TMDB_DETAIL_CACHE: dict[tuple[str, int], dict] = {}
+_TMDB_DETAIL_CACHE_MAX = 64
+_TRT_ENRICH_CAP = 6
 
 _FORGIVING_ENV_TOKENS = frozenset(("forgiving", "loose", "legacy", "1", "true", "yes", "on"))
 
@@ -555,6 +565,264 @@ def _pick_best_from_pool(
         return _result_pick_key(it, media_kind, watch_provider_ids)
 
     return max(pool, key=key)
+
+
+def set_player_duration_hint(seconds: float | None) -> float | None:
+    """Remember Apple TV TRT (seconds) for the current TMDb search."""
+    global _PLAYER_DURATION_S
+    prev = _PLAYER_DURATION_S
+    try:
+        value = float(seconds) if seconds is not None else None
+    except (TypeError, ValueError):
+        value = None
+    _PLAYER_DURATION_S = value if value is not None and value > 0.0 else None
+    return prev
+
+
+@contextmanager
+def player_duration_hint(seconds: float | None) -> Iterator[None]:
+    prev = set_player_duration_hint(seconds)
+    try:
+        yield
+    finally:
+        set_player_duration_hint(prev)
+
+
+def last_trt_comparison() -> dict[str, float | None]:
+    return dict(_LAST_TRT)
+
+
+def remember_trt_comparison(
+    *,
+    player_s: float | None,
+    tmdb_s: float | None,
+    similarity: float | None,
+) -> None:
+    _LAST_TRT["player_s"] = player_s
+    _LAST_TRT["tmdb_s"] = tmdb_s
+    _LAST_TRT["similarity"] = similarity
+
+
+def tmdb_runtime_seconds_options(item: dict | None) -> list[float]:
+    """Possible TMDb lengths in seconds (film runtime, episode, whole series)."""
+    if not isinstance(item, dict):
+        return []
+    out: list[float] = []
+
+    def _add_minutes(raw: object) -> None:
+        try:
+            minutes = float(raw)
+        except (TypeError, ValueError):
+            return
+        if minutes > 0.0:
+            out.append(minutes * 60.0)
+
+    _add_minutes(item.get("runtime"))
+    ert = item.get("episode_run_time")
+    ep_minutes: list[float] = []
+    if isinstance(ert, list):
+        for raw in ert:
+            try:
+                minutes = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if minutes > 0.0:
+                ep_minutes.append(minutes)
+                _add_minutes(minutes)
+    else:
+        try:
+            minutes = float(ert) if ert not in (None, "") else 0.0
+        except (TypeError, ValueError):
+            minutes = 0.0
+        if minutes > 0.0:
+            ep_minutes.append(minutes)
+            _add_minutes(minutes)
+    episodes = 0
+    try:
+        episodes = int(item.get("number_of_episodes") or 0)
+    except (TypeError, ValueError):
+        episodes = 0
+    seasons = item.get("seasons")
+    if isinstance(seasons, list):
+        season_eps = 0
+        for season in seasons:
+            if not isinstance(season, dict):
+                continue
+            try:
+                if int(season.get("season_number") or 0) == 0:
+                    continue
+                season_eps += int(season.get("episode_count") or 0)
+            except (TypeError, ValueError):
+                continue
+        if season_eps > episodes:
+            episodes = season_eps
+    if episodes > 1 and ep_minutes:
+        _add_minutes(ep_minutes[0] * episodes)
+    unique = sorted({round(sec, 3) for sec in out if sec > 0.0})
+    return unique
+
+
+def _item_has_runtime_fields(item: dict) -> bool:
+    if item.get("runtime"):
+        return True
+    ert = item.get("episode_run_time")
+    if isinstance(ert, list):
+        return bool(ert)
+    return bool(ert)
+
+
+def _cache_tmdb_detail(kind: MediaKind, media_id: int, detail: dict) -> None:
+    if len(_TMDB_DETAIL_CACHE) >= _TMDB_DETAIL_CACHE_MAX:
+        _TMDB_DETAIL_CACHE.pop(next(iter(_TMDB_DETAIL_CACHE)))
+    slim = {
+        "runtime": detail.get("runtime"),
+        "episode_run_time": detail.get("episode_run_time"),
+        "number_of_episodes": detail.get("number_of_episodes"),
+        "seasons": detail.get("seasons"),
+    }
+    _TMDB_DETAIL_CACHE[(kind, int(media_id))] = slim
+
+
+def enrich_item_runtime(item: dict, kind: MediaKind) -> dict:
+    """Attach TMDb detail runtimes when search rows omit them."""
+    if not isinstance(item, dict):
+        return item
+    if _item_has_runtime_fields(item):
+        return item
+    try:
+        mid = int(item.get("id"))
+    except (TypeError, ValueError):
+        return item
+    cached = _TMDB_DETAIL_CACHE.get((kind, mid))
+    if cached is None:
+        detail = _tmdb_movie_detail(mid) if kind == "movie" else _tmdb_tv_detail(mid)
+        if not isinstance(detail, dict):
+            return item
+        _cache_tmdb_detail(kind, mid, detail)
+        cached = _TMDB_DETAIL_CACHE.get((kind, mid))
+    if not cached:
+        return item
+    merged = dict(item)
+    for key, value in cached.items():
+        if value not in (None, "", []):
+            merged[key] = value
+    if kind == "tv" and not tmdb_runtime_seconds_options(merged):
+        episode = _tmdb_tv_episode(mid, 1, 1)
+        runtime = episode.get("runtime") if isinstance(episode, dict) else None
+        if runtime:
+            merged = dict(merged)
+            merged["episode_run_time"] = [runtime]
+            cached_ep = dict(cached)
+            cached_ep["episode_run_time"] = [runtime]
+            _TMDB_DETAIL_CACHE[(kind, mid)] = cached_ep
+    return merged
+
+
+def _best_runtime_seconds(item: dict | None) -> float | None:
+    opts = tmdb_runtime_seconds_options(item)
+    player = _PLAYER_DURATION_S
+    if not opts:
+        return None
+    if player is None:
+        return opts[0]
+    from pigeon.display_confidence import trt_similarity
+
+    return max(opts, key=lambda sec: trt_similarity(player, sec))
+
+
+def _trt_score_for_item(item: dict | None) -> float | None:
+    from pigeon.display_confidence import trt_confidence
+
+    return trt_confidence(_PLAYER_DURATION_S, tmdb_runtime_seconds_options(item))
+
+
+def _forced_movie_survives_trt(item: dict | None) -> dict | None:
+    """Drop a forced movie shortcut when Apple TV TRT clearly disagrees."""
+    if item is None:
+        return None
+    if _PLAYER_DURATION_S is None:
+        return item
+    from pigeon.display_confidence import trt_is_reject
+
+    enriched = enrich_item_runtime(item, "movie")
+    if trt_is_reject(_PLAYER_DURATION_S, tmdb_runtime_seconds_options(enriched)):
+        return None
+    return enriched
+
+
+def _prefer_duration_match(
+    movie: dict | None,
+    tv: dict | None,
+) -> tuple[dict | None, MediaKind | None]:
+    """When Apple TV TRT is known, pick the catalogue whose runtime is closer."""
+    from pigeon.display_confidence import trt_is_reject
+
+    player = _PLAYER_DURATION_S
+    movie_e = enrich_item_runtime(movie, "movie") if movie is not None else None
+    tv_e = enrich_item_runtime(tv, "tv") if tv is not None else None
+    movie_s = _trt_score_for_item(movie_e)
+    tv_s = _trt_score_for_item(tv_e)
+    if movie_e is not None and trt_is_reject(player, tmdb_runtime_seconds_options(movie_e)):
+        movie_e, movie_s = None, None
+    if tv_e is not None and trt_is_reject(player, tmdb_runtime_seconds_options(tv_e)):
+        tv_e, tv_s = None, None
+    if movie_e is not None and tv_e is not None:
+        if movie_s is not None and tv_s is not None:
+            if tv_s > movie_s + 0.08:
+                return tv_e, "tv"
+            if movie_s > tv_s + 0.08:
+                return movie_e, "movie"
+            return (tv_e, "tv") if tv_s > movie_s else (movie_e, "movie")
+        if tv_s is not None and movie_s is None:
+            return tv_e, "tv"
+        if movie_s is not None and tv_s is None:
+            return movie_e, "movie"
+        return movie_e, "movie"
+    if movie_e is not None:
+        return movie_e, "movie"
+    if tv_e is not None:
+        return tv_e, "tv"
+    if player is None:
+        if movie is not None:
+            return movie, "movie"
+        if tv is not None:
+            return tv, "tv"
+    return None, None
+
+
+def _rerank_scored_by_trt(
+    scored: list[tuple[dict, tuple[int, int]]],
+    *,
+    media_kind: MediaKind | None,
+    title_pick: dict | None,
+) -> dict | None:
+    """Prefer title hits whose TMDb runtime matches Apple TV TRT."""
+    from pigeon.display_confidence import TRT_AGREE, trt_is_reject
+
+    if _PLAYER_DURATION_S is None or not scored:
+        return title_pick
+    best_tier = max(rk[0] for _, rk in scored)
+    floor = max(3, best_tier - 1) if best_tier > 0 else 0
+    eligible = [(r, rk) for r, rk in scored if rk[0] >= floor]
+    eligible.sort(key=lambda pair: (pair[1], _english_prefer_popularity_key(pair[0])), reverse=True)
+    ranked: list[tuple[dict, tuple[int, int], float | None]] = []
+    for raw, rk in eligible[:_TRT_ENRICH_CAP]:
+        item = enrich_item_runtime(raw, media_kind) if media_kind is not None else raw
+        ranked.append((item, rk, _trt_score_for_item(item)))
+    agree = [row for row in ranked if row[2] is not None and row[2] >= TRT_AGREE]
+    if agree:
+        return max(agree, key=lambda row: (row[2], row[1]))[0]
+    weak = [
+        row
+        for row in ranked
+        if row[2] is not None
+        and not trt_is_reject(_PLAYER_DURATION_S, tmdb_runtime_seconds_options(row[0]))
+    ]
+    if weak:
+        return max(weak, key=lambda row: (row[2], row[1]))[0]
+    if any(row[2] is None for row in ranked):
+        return title_pick
+    return None
 
 
 def _item_has_kids_genre(item: dict) -> bool:
@@ -1643,6 +1911,7 @@ def _pick_scored_best(
     if forgiving:
         best_key = max(rank for _, rank in scored)
         pool = [r for r, rank in scored if rank == best_key] if best_key[0] > 0 else [r for r, _ in scored]
+        ranked = scored
     else:
         min_tier = _literal_min_acceptable_tier(query)
         strict = [(r, rk) for r, rk in scored if rk[0] >= min_tier]
@@ -1650,9 +1919,13 @@ def _pick_scored_best(
             return None
         best_key = max(rk for _, rk in strict)
         pool = [r for r, rk in strict if rk == best_key]
-    return _pick_best_from_pool(
+        ranked = strict
+    title_pick = _pick_best_from_pool(
         pool, media_kind=media_kind, watch_provider_ids=watch_provider_ids
     )
+    if _PLAYER_DURATION_S is None:
+        return title_pick
+    return _rerank_scored_by_trt(ranked, media_kind=media_kind, title_pick=title_pick)
 
 
 def _best_with_poster_from_results(
@@ -1933,6 +2206,17 @@ def _tmdb_tv_detail(tv_id: int) -> dict | None:
     return data
 
 
+def _tmdb_tv_episode(tv_id: int, season: int, episode: int) -> dict | None:
+    try:
+        data = _request_json(
+            f"{TMDB_API_BASE}/tv/{int(tv_id)}/season/{int(season)}/episode/{int(episode)}"
+            f"?{urllib.parse.urlencode({'language': TMDB_UI_LANGUAGE})}"
+        )
+    except (RuntimeError, urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError, OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def _tmdb_movie_detail(movie_id: int) -> dict | None:
     try:
         data = _request_json(
@@ -2106,7 +2390,8 @@ def _search_best_media_with_poster_one(
         )
         return (t, "tv") if t else (None, None)
 
-    # auto: prefer the movie catalogue when it yields a hit; if no film matches, try TV.
+    # auto: movie first. When Apple TV TRT is known, search both catalogues
+    # and prefer the closer runtime (1990 It miniseries vs 2017 film vs a short parody).
     m = search_movie_best_with_poster(
         q,
         forgiving=forgiving,
@@ -2114,8 +2399,17 @@ def _search_best_media_with_poster_one(
         kids_bias=kids_bias,
         watch_provider_ids=providers,
     )
-    if m is not None:
-        return m, "movie"
+    if _PLAYER_DURATION_S is None:
+        if m is not None:
+            return m, "movie"
+        t = search_tv_best_with_poster(
+            q,
+            forgiving=forgiving,
+            rank_query=rq,
+            kids_bias=kids_bias,
+            watch_provider_ids=providers,
+        )
+        return (t, "tv") if t else (None, None)
     t = search_tv_best_with_poster(
         q,
         forgiving=forgiving,
@@ -2123,7 +2417,7 @@ def _search_best_media_with_poster_one(
         kids_bias=kids_bias,
         watch_provider_ids=providers,
     )
-    return (t, "tv") if t else (None, None)
+    return _prefer_duration_match(m, t)
 
 
 def _episode_title_series_fallback(
@@ -2227,7 +2521,7 @@ def search_best_media_with_poster(
     )
     if raw and not kids:
         mf = _forced_tmdb_movie_item_for_disambiguated_query(raw, require_poster=True)
-        if mf is not None:
+        if _forced_movie_survives_trt(mf) is not None:
             return mf, "movie"
     variants = _service_augmented_search_queries(
         raw, service_hint=hint, forgiving=fg, service_first=_service_first_enabled(hint)
@@ -2280,7 +2574,7 @@ def search_best_media(
     )
     if raw and not kids:
         mf = _forced_tmdb_movie_item_for_disambiguated_query(raw, require_poster=False)
-        if mf is not None:
+        if _forced_movie_survives_trt(mf) is not None:
             return mf, "movie"
     variants = _service_augmented_search_queries(
         raw, service_hint=hint, forgiving=fg, service_first=_service_first_enabled(hint)
@@ -2353,6 +2647,7 @@ def _search_best_media_one(
         return (t, "tv") if t else (None, None)
 
     # auto: movie catalogue first, then TV when no film hit (same policy as with-poster path).
+    # Known Apple TV TRT searches both so a long 1990 miniseries can beat a short parody.
     m = search_movie_best(
         q,
         forgiving=forgiving,
@@ -2360,8 +2655,17 @@ def _search_best_media_one(
         kids_bias=kids_bias,
         watch_provider_ids=providers,
     )
-    if m is not None:
-        return m, "movie"
+    if _PLAYER_DURATION_S is None:
+        if m is not None:
+            return m, "movie"
+        t = search_tv_best(
+            q,
+            forgiving=forgiving,
+            rank_query=rq,
+            kids_bias=kids_bias,
+            watch_provider_ids=providers,
+        )
+        return (t, "tv") if t else (None, None)
     t = search_tv_best(
         q,
         forgiving=forgiving,
@@ -2369,7 +2673,7 @@ def _search_best_media_one(
         kids_bias=kids_bias,
         watch_provider_ids=providers,
     )
-    return (t, "tv") if t else (None, None)
+    return _prefer_duration_match(m, t)
 
 
 def fetch_media_images(kind: MediaKind, media_id: int) -> dict:
@@ -2793,6 +3097,7 @@ def apply_tmdb_movie_query(
     app_name: str | None = None,
     app_id: str | None = None,
     service_hint: str | None = None,
+    player_duration_s: float | None = None,
 ) -> tuple[bool, str, np.ndarray | None, int]:
     """
     Search TMDb, prefer cached logo when present; pull missing assets and cache as
@@ -2804,10 +3109,16 @@ def apply_tmdb_movie_query(
     app: search ``Title Service`` first, prefer titles listed on that service, and
     (for kids-primary apps) prefer TV and demote adult substring hits.
 
+    ``player_duration_s`` is Apple TV ``total_time`` (seconds). When set, TMDb hits
+    whose runtime is far from that length are rejected, and movie vs TV ties prefer
+    the closer TRT.
+
     Returns ``(ok, message, backdrop_master_bgr_or_none, match_tier)`` where master is BGR
     scaled to uniform design canvas height for the compositor, or None if no backdrop could be
     loaded. ``match_tier`` is the :func:`_match_rank` tier (0 when no hit).
     """
+    from pigeon.display_confidence import parse_duration_seconds, trt_confidence, trt_is_reject
+
     q = query.strip()
     if not q:
         return False, "Empty search.", None, 0
@@ -2822,41 +3133,31 @@ def apply_tmdb_movie_query(
     kids = is_kids_streaming_service(app_name, app_id)
     pref = prefer_media_for_streaming_service(prefer, app_name=app_name, app_id=app_id)
     service_first = _service_first_enabled(hint)
+    duration = parse_duration_seconds(player_duration_s)
+    remember_trt_comparison(player_s=duration, tmdb_s=None, similarity=None)
 
     try:
-        item, kind = search_best_media(
-            q,
-            prefer=pref,
-            forgiving=forgiving,
-            service_hint=hint,
-            kids_bias=kids,
-            app_name=app_name,
-            app_id=app_id,
-        )
-        if item is None and not fg:
-            variants = _service_augmented_search_queries(
-                q, service_hint=hint, forgiving=True, service_first=service_first
+        with player_duration_hint(duration):
+            item, kind = search_best_media(
+                q,
+                prefer=pref,
+                forgiving=forgiving,
+                service_hint=hint,
+                kids_bias=kids,
+                app_name=app_name,
+                app_id=app_id,
             )
-            for v in variants:
-                if v.strip().casefold() == q.strip().casefold():
-                    continue
-                item, kind = search_best_media(
-                    v,
-                    prefer=pref,
-                    forgiving=False,
-                    service_hint=None,
-                    kids_bias=kids,
-                    app_name=app_name,
-                    app_id=app_id,
+            if item is None and not fg:
+                variants = _service_augmented_search_queries(
+                    q, service_hint=hint, forgiving=True, service_first=service_first
                 )
-                if item is not None:
-                    break
-            if item is None:
                 for v in variants:
+                    if v.strip().casefold() == q.strip().casefold():
+                        continue
                     item, kind = search_best_media(
                         v,
                         prefer=pref,
-                        forgiving=True,
+                        forgiving=False,
                         service_hint=None,
                         kids_bias=kids,
                         app_name=app_name,
@@ -2864,6 +3165,19 @@ def apply_tmdb_movie_query(
                     )
                     if item is not None:
                         break
+                if item is None:
+                    for v in variants:
+                        item, kind = search_best_media(
+                            v,
+                            prefer=pref,
+                            forgiving=True,
+                            service_hint=None,
+                            kids_bias=kids,
+                            app_name=app_name,
+                            app_id=app_id,
+                        )
+                        if item is not None:
+                            break
     except RuntimeError as e:
         return False, str(e), None, 0
     except urllib.error.HTTPError as e:
@@ -2889,6 +3203,29 @@ def apply_tmdb_movie_query(
             "Tips: Use tv Your Show or movie Your Film in the command bar; try the main title "
             "only. Apple TV sometimes sends a label TMDb does not recognize (episode titles, apps, "
             "Show: guest lines, or extras). Check spelling and network — API errors show a different message.",
+            None,
+            0,
+        )
+
+    item = enrich_item_runtime(item, kind)
+    runtime_opts = tmdb_runtime_seconds_options(item)
+    if runtime_opts:
+        if duration is None:
+            tmdb_s = runtime_opts[0]
+        else:
+            from pigeon.display_confidence import trt_similarity
+
+            tmdb_s = max(runtime_opts, key=lambda sec: trt_similarity(duration, sec))
+    else:
+        tmdb_s = None
+    similarity = trt_confidence(duration, runtime_opts)
+    remember_trt_comparison(player_s=duration, tmdb_s=tmdb_s, similarity=similarity)
+    if duration is not None and trt_is_reject(duration, runtime_opts):
+        return (
+            False,
+            "TMDb runtime does not match the Apple TV duration.\n\n"
+            f"Searched: {q!r}\n"
+            "The matched title is much shorter or longer than what is playing.",
             None,
             0,
         )

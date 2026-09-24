@@ -157,7 +157,7 @@ pigeon_prepare_runtime_dirs "${INSTALL_DIR}"
 pigeon_install_bundled_fonts "${INSTALL_DIR}" "${INSTALL_HOME}"
 chown -R "${INSTALL_USER}:${INSTALL_USER}" "${INSTALL_HOME}/.local/share/fonts/pigeon" 2>/dev/null || true
 chmod +x \
-  "${INSTALL_DIR}/installer/run_pigeon_0_10.sh" \
+  "${INSTALL_DIR}/installer/run_pigeon_0_11.sh" \
   "${INSTALL_DIR}/installer/install_pigeon.sh" \
   "${INSTALL_DIR}/installer/install-pigeon.sh" \
   "${INSTALL_DIR}/installer/run-pigeon.sh" \
@@ -173,7 +173,7 @@ chmod +x \
   "${INSTALL_DIR}/installer/install_from_github.sh" 2>/dev/null || true
 
 echo "==> Creating Python virtual environment and installing pip packages (may take several minutes)…"
-if ! sudo -u "${INSTALL_USER}" bash -c "cd '${INSTALL_DIR}' && ./installer/run_pigeon_0_10.sh --bootstrap-only"; then
+if ! sudo -u "${INSTALL_USER}" bash -c "cd '${INSTALL_DIR}' && ./installer/run_pigeon_0_11.sh --bootstrap-only"; then
   echo "pigeon: pip install failed. Common fixes:" >&2
   echo "  - Ensure the Pi has internet" >&2
   echo "  - Re-run Install-Pigeon" >&2
@@ -230,7 +230,7 @@ echo "Launch from Desktop:"
 echo "  Double-click “Run Pigeon” on the Desktop"
 echo ""
 echo "Or from a folder:"
-echo "  cd '${INSTALL_DIR}' && ./installer/run_pigeon_0_10.sh"
+echo "  cd '${INSTALL_DIR}' && ./installer/run_pigeon_0_11.sh"
 echo ""
 if [[ "${ENABLE_AUTOSTART}" -eq 1 ]] && command -v systemctl >/dev/null 2>&1; then
   echo "Autostart on boot (after graphical login):"

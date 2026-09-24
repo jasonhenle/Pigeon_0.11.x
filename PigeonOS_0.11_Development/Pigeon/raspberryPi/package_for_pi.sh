@@ -51,6 +51,19 @@ if [[ ! -d "${STAGING_APP}/pigeonAssets/App logos" ]]; then
   echo "ERROR: staging is missing pigeonAssets — app tree looks incomplete." >&2
   exit 1
 fi
+if [[ ! -f "${STAGING_APP}/pigeonAssets/App logos/AppLogo_Pigeon.png" ]]; then
+  echo "ERROR: staging is missing pigeonAssets/App logos/AppLogo_Pigeon.png." >&2
+  exit 1
+fi
+SPLASH_COUNT="$(
+  find "${STAGING_APP}/pigeonAssets/pigeonSplash" -maxdepth 1 -type f \
+    -name 'widget_pigeon_splash_*.png' ! -name '.*' 2>/dev/null | wc -l | tr -d ' '
+)"
+if [[ ! -f "${STAGING_APP}/pigeonAssets/pigeonSplash/widget_pigeon_splash_00090.png" ]] \
+  || [[ "${SPLASH_COUNT}" -lt 91 ]]; then
+  echo "ERROR: staging is missing the pigeon splash sequence (need 00000–00090)." >&2
+  exit 1
+fi
 if [[ "${STAGING_BYTES}" -lt 20480 ]]; then
   echo "ERROR: staging is only ${STAGING_BYTES} KB (expected tens of MB). Aborting." >&2
   exit 1
@@ -64,8 +77,8 @@ mkdir -p \
   "${STAGING_APP}/pigeonTMDB/pigeonTMDB_TT"
 
 chmod +x \
-  "${STAGING_APP}/installer/run_pigeon_0_10.sh" \
-  "${STAGING_APP}/installer/run_pigeon_0_10.command" \
+  "${STAGING_APP}/installer/run_pigeon_0_11.sh" \
+  "${STAGING_APP}/installer/run_pigeon_0_11.command" \
   "${STAGING_APP}/installer/install_pigeon.sh" \
   "${STAGING_APP}/installer/run-pigeon.sh" \
   "${STAGING_APP}/installer/Install-Pigeon" \

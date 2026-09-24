@@ -27,7 +27,7 @@ from pigeon.update_assets import ensure_required_assets
 # ``(fraction 0..1, status label)`` — called from the worker thread.
 UpdateProgressFn = Callable[[float, str], None]
 
-_UA = "Pigeon/0.10 (github-update)"
+_UA = "Pigeon/0.11 (github-update)"
 _SHELL_UPDATE_SCRIPT = "pigeon_github_update.sh"
 _LEGACY_SHELL_UPDATE_SCRIPT = "pi_update_from_github.sh"
 _BOOTSTRAP_SCRIPT_RAW = (
@@ -35,6 +35,8 @@ _BOOTSTRAP_SCRIPT_RAW = (
     "PigeonOS_0.11_Development/Pigeon/installer/pigeon_github_update.sh"
 )
 _LAUNCHER_NAMES = (
+    "run_pigeon_0_11.command",
+    "run_pigeon_0_11.sh",
     "run_pigeon_0_10.command",
     "run_pigeon_0_10.sh",
     # Legacy names accepted when scanning old GitHub zips for migration.
@@ -46,7 +48,7 @@ _LAUNCHER_NAMES = (
     "run-pigeon.sh",
 )
 _INSTALLER_DIR = "installer"
-# Prefer 0.10; legacy names accepted when scanning old zips for migration.
+# Prefer 0.11; legacy names accepted when scanning old zips for migration.
 _MAIN_PY_NAMES = ("pigeon_0_9.py", "pigeon_0_8.py", "pigeon_0_7.py", "pigeon_0_6.py")
 _PREFERRED_APP_REL = Path("PigeonOS_0.11_Development") / "Pigeon"
 
@@ -160,9 +162,11 @@ def _find_launcher_script(install_root: Path) -> Path | None:
 
 
 def _preferred_launcher_script(install_root: Path) -> Path | None:
-    """Prefer the 0.10 entry point after a GitHub update."""
+    """Prefer the 0.11 entry point after a GitHub update."""
     installer = install_root / _INSTALLER_DIR
     for name in (
+        "run_pigeon_0_11.sh",
+        "run_pigeon_0_11.command",
         "run_pigeon_0_10.sh",
         "run_pigeon_0_10.command",
         "click_run_pigeon_pi.sh",
@@ -300,14 +304,21 @@ def restart_pigeon_after_update(
     launcher = _preferred_launcher_script(install_root)
 
     if sys.platform.startswith("linux"):
-        launcher_09 = install_root / _INSTALLER_DIR / "run_pigeon_0_10.sh"
-        if launcher_09.is_file():
-            # Prefer systemd when the unit already points at the 0.10 launcher.
+        launcher_11 = install_root / _INSTALLER_DIR / "run_pigeon_0_11.sh"
+        launcher_10 = install_root / _INSTALLER_DIR / "run_pigeon_0_10.sh"
+        if launcher_11.is_file():
+            if _systemd_points_to_launcher(install_root, "run_pigeon_0_11.sh"):
+                ok, msg = _try_systemd_restart()
+                if ok:
+                    return True, msg
+            return _schedule_delayed_launch(launcher_11, install_root, parent_pid=pid)
+        if launcher_10.is_file():
+            # Prefer systemd when the unit already points at the legacy 0.10 launcher.
             if _systemd_points_to_launcher(install_root, "run_pigeon_0_10.sh"):
                 ok, msg = _try_systemd_restart()
                 if ok:
                     return True, msg
-            return _schedule_delayed_launch(launcher_09, install_root, parent_pid=pid)
+            return _schedule_delayed_launch(launcher_10, install_root, parent_pid=pid)
 
     if launcher is None:
         return False, "no launcher script found"
@@ -367,7 +378,7 @@ def github_full_download_page_url() -> str:
 
 
 def _find_app_root_in_tree(root: Path) -> Path | None:
-    """Locate the Pigeon app folder inside a GitHub zip extract (prefer 0.10 layout)."""
+    """Locate the Pigeon app folder inside a GitHub zip extract (prefer 0.11 layout)."""
     bases: list[Path] = [root]
     if root.is_dir():
         bases.extend(p for p in root.iterdir() if p.is_dir())
@@ -387,6 +398,7 @@ def _find_app_root_in_tree(root: Path) -> Path | None:
 
     try:
         for pattern in (
+            "run_pigeon_0_11.sh",
             "run_pigeon_0_10.sh",
             "run_pigeon_0_8.sh",
             "run_pigeon_0_7.sh",
@@ -402,6 +414,7 @@ def _find_app_root_in_tree(root: Path) -> Path | None:
                 ):
                     return parent
         for pattern in (
+            "run_pigeon_0_11.sh",
             "run_pigeon_0_10.sh",
             "run_pigeon_0_8.sh",
             "run_pigeon_0_7.sh",
@@ -422,7 +435,7 @@ def _restore_installer_exec_bits(install_root: Path) -> None:
     """Re-apply +x to installed launchers.
 
     ``zipfile.extractall`` drops Unix modes, and ``rsync -a`` then copies the
-    stripped permissions over the install — systemd execs run_pigeon_0_10.sh
+    stripped permissions over the install — systemd execs run_pigeon_0_11.sh
     directly, so a missing +x leaves the service in a 203/EXEC restart loop.
     """
     inst = install_root / _INSTALLER_DIR
@@ -504,11 +517,15 @@ def _rsync_merge(source: Path, dest: Path) -> tuple[bool, str]:
 
 def _run_bootstrap(install_root: Path) -> tuple[bool, str]:
     installer = install_root / _INSTALLER_DIR
-    launcher = installer / "run_pigeon_0_10.sh"
+    launcher = installer / "run_pigeon_0_11.sh"
+    if not launcher.is_file():
+        launcher = installer / "run_pigeon_0_10.sh"
     if not launcher.is_file():
         launcher = installer / "run_pigeon_0_8.sh"  # legacy zip fallback
     if not launcher.is_file():
         launcher = installer / "run_pigeon_0_6.sh"
+    if not launcher.is_file():
+        launcher = install_root / "run_pigeon_0_11.sh"
     if not launcher.is_file():
         launcher = install_root / "run_pigeon_0_10.sh"
     if not launcher.is_file():
@@ -719,7 +736,7 @@ def apply_github_update(
         if app_src is None:
             return ApplyUpdateResult(
                 False,
-                "Could not find Pigeon app folder (installer/run_pigeon_0_10.sh) inside GitHub zip.",
+                "Could not find Pigeon app folder (installer/run_pigeon_0_11.sh) inside GitHub zip.",
             )
 
         _report_progress(progress, 0.68, "Installing files…")

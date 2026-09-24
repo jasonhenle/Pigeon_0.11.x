@@ -620,7 +620,7 @@ class SettingsRenderTests(unittest.TestCase):
         self.assertEqual(preview.widgets_focused_id, "zone6")
         self.assertEqual(
             preview.preferences_zone_widgets,
-            ("tt_countdown_16x9", "", "volume", "cast_info", "status_bar"),
+            ("tt_countdown_16x9", "", "audio_levels", "cast_info", "status_bar"),
         )
 
         active = render_pigeon_settings_bgra(preview, assets_dir=assets)
@@ -658,11 +658,17 @@ class SettingsRenderTests(unittest.TestCase):
         self.assertEqual(preview.widgets_nav, "widgets")
         self.assertEqual(preview.widgets_active_zone, "zone6")
         self.assertEqual(preview.widgets_focused_id, "artwork")
-        preview.navigate_widgets(forward=True)
+        while preview.widgets_focused_id != "clock":
+            preview.navigate_widgets(forward=True)
+            self.assertNotEqual(
+                preview.widgets_focused_id,
+                "pigeon_back",
+                "clock missing from zone6 catalog",
+            )
         self.assertEqual(preview.widgets_focused_id, "clock")
         self.assertEqual(preview.widgets_active_zone, "zone6")
         self.assertEqual(widget_id_for_zone(preview, "zone6"), "clock")
-        self.assertEqual(widget_id_for_zone(preview, "zone3"), "volume")
+        self.assertEqual(widget_id_for_zone(preview, "zone3"), "levels")
         labels = render_pigeon_settings_bgra(preview, assets_dir=assets)
         still_zone6 = labels[267:271, 385:770, :3]
         self.assertGreater(
@@ -784,6 +790,20 @@ class SettingsRenderTests(unittest.TestCase):
         # Selected capsule is white; Digital-7 EXIT is black on that fill.
         self.assertGreater(int(np.count_nonzero(np.all(roi > 200, axis=2))), 200)
         self.assertGreater(int(np.count_nonzero(np.all(roi < 40, axis=2))), 40)
+
+    def test_exit_hidden_when_disabled(self) -> None:
+        from pigeon.widgets.main_settings import MainSettingsState
+        from pigeon.widgets.settings_main_1280 import render_settings_main_1280_bgra
+
+        assets = Path(__file__).resolve().parents[2] / "pigeonAssets"
+        st = MainSettingsState()
+        st.exit_enabled = False
+        st.ensure_focus_ring()
+        self.assertNotIn("main_exit_button", st.focus_ring)
+        frame = render_settings_main_1280_bgra(st, assets_dir=assets)
+        x, y, w, h = SETTINGS_MAIN_ZONES[0].xywh
+        roi = frame[y : y + h, x : x + w, :3]
+        self.assertLess(int(np.count_nonzero(np.all(roi > 200, axis=2))), 80)
 
     def test_background_is_clipped_to_menu_plate(self) -> None:
         from pigeon.widgets.main_settings import MainSettingsState

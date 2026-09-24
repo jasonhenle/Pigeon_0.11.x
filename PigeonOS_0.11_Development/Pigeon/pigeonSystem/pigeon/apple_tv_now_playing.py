@@ -762,9 +762,23 @@ def apple_tv_should_show_idle_clock(
     *,
     consecutive_fail: int = 0,
 ) -> bool:
-    """True when the Apple TV is powered off or unreachable — show the analog clock."""
+    """True when the Apple TV is powered off or unreachable — show the analog clock.
+
+    Scan flakes are common while a show is still playing. A displayable title
+    means the box is not off for UI purposes; HDMI / held identity keep looking.
+    """
     if apple_tv_power_is_off(metadata):
         return True
+    try:
+        from pigeon.display_confidence import (
+            identity_displayable,
+            player_metadata_adequate,
+        )
+
+        if identity_displayable(metadata) or player_metadata_adequate(metadata):
+            return False
+    except Exception:
+        pass
     return int(consecutive_fail or 0) >= ATV_OFF_POLL_FAILS
 
 

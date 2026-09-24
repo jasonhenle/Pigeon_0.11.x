@@ -2,8 +2,22 @@
 
 from __future__ import annotations
 
-# Paused title holds the paused plate until this span, then the saver takes over.
+# Pausesaver holds for this span, then Clocksaver takes over.
 CLOCK_SAVER_PAUSED_AFTER_S = 30.0
+
+
+def player_reports_playing(
+    device_state: object = "",
+    *,
+    clock_playing: bool = False,
+) -> bool:
+    """True only for active playback. Paused / Stopped beat a stale clock flag."""
+    ds = str(device_state or "")
+    if "Paused" in ds or "Stopped" in ds:
+        return False
+    if bool(clock_playing) or "Playing" in ds:
+        return True
+    return False
 
 
 def next_paused_since_mono(paused: bool, now: float, paused_since_mono: float) -> float:
@@ -13,6 +27,30 @@ def next_paused_since_mono(paused: bool, now: float, paused_since_mono: float) -
     if float(paused_since_mono) <= 0.0:
         return float(now)
     return float(paused_since_mono)
+
+
+def tick_pause_hold(
+    paused: bool,
+    now: float,
+    paused_since_mono: float,
+    last_hold_mono: float,
+    *,
+    grace_s: float = 2.5,
+) -> tuple[float, float, float]:
+    """Age a pausesaver hold, ignoring brief metadata drops.
+
+    Returns ``(age_s, since_mono, last_hold_mono)``.
+    """
+    t = float(now)
+    since = float(paused_since_mono)
+    last = float(last_hold_mono)
+    if paused:
+        if since <= 0.0:
+            since = t
+        return max(0.0, t - since), since, t
+    if since > 0.0 and last > 0.0 and (t - last) < float(grace_s):
+        return max(0.0, t - since), since, last
+    return 0.0, 0.0, 0.0
 
 
 def pause_hold_s(paused: bool, now: float, paused_since_mono: float) -> float:
@@ -30,6 +68,24 @@ def clock_saver_due_for_pause(
 ) -> bool:
     """True when loaded content has stayed paused long enough to show the saver."""
     return bool(paused) and float(paused_for_s) >= float(after_s)
+
+
+def pausesaver_due_for_clocksaver(
+    held_for_s: float,
+    *,
+    after_s: float = CLOCK_SAVER_PAUSED_AFTER_S,
+) -> bool:
+    """True after Pausesaver has been up long enough to hand off to Clocksaver."""
+    return float(held_for_s) >= float(after_s)
+
+
+def pausesaver_hold_from_metadata_class(player_metadata: str) -> bool:
+    """True while auto widgets classify this as paused/stopped content.
+
+    A held title can still look like playback. Do not let that veto a
+    ``stopped`` classification — otherwise the Clocksaver timer never ages.
+    """
+    return str(player_metadata or "").strip().lower() == "stopped"
 
 
 def clock_saver_due_for_no_content(

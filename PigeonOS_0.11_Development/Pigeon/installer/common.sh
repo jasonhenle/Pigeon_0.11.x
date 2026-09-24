@@ -32,6 +32,12 @@ pigeon_rsync_tree() {
     --exclude 'pigeonSystem/pigeon/**/__pycache__' \
     --exclude 'pigeonCashe' \
     --exclude 'raspberryPi/dist' \
+    --exclude 'pigeonTMDB/pigeonTMDB_BD' \
+    --exclude 'pigeonTMDB/pigeonTMDB_ORIGINAL' \
+    --exclude 'pigeonTMDB/pigeonTMDB_Poster' \
+    --exclude 'pigeonTMDB/pigeonTMDB_TT' \
+    --exclude 'pigeonTMDB/*.jpg' \
+    --exclude 'pigeonTMDB/*.png' \
     "${src}/" "${dest}/"
 }
 
@@ -70,7 +76,7 @@ pigeon_install_bundled_fonts() {
 }
 
 # Passwordless ``systemctl restart pigeon`` for in-app GitHub updates (Pi autostart).
-# Rewrite an existing Pi autostart unit to launch run_pigeon_0_10.sh (legacy -> 0.10 migration).
+# Rewrite an existing Pi autostart unit to launch run_pigeon_0_11.sh (legacy -> 0.11 migration).
 pigeon_refresh_systemd_service() {
   local install_dir="${1:-}"
   local install_user="${2:-$(id -un)}"
@@ -80,7 +86,7 @@ pigeon_refresh_systemd_service() {
   if [[ -z "${install_dir}" || ! -f "${template}" || ! -f "${service}" ]]; then
     return 0
   fi
-  if grep -q "run_pigeon_0_10.sh" "${service}" 2>/dev/null; then
+  if grep -qE "run_pigeon_0_11\\.sh|run_pigeon_0_10\\.sh" "${service}" 2>/dev/null; then
     return 0
   fi
   local version tmp
@@ -147,7 +153,7 @@ macOS default install dir:  ~/Applications/Pigeon_${ver}
 Linux / Pi default dir:   ~/Pigeon_${ver}
 
 After install, launch with:
-  macOS:  ~/Desktop/Pigeon.command   (or installer/run_pigeon_0_10.command in the install folder)
-  Linux:  ./installer/run_pigeon_0_10.sh (in the install folder)
+  macOS:  ~/Desktop/Pigeon.command   (or installer/run_pigeon_0_11.command in the install folder)
+  Linux:  ./installer/run_pigeon_0_11.sh (in the install folder)
 EOF
 }

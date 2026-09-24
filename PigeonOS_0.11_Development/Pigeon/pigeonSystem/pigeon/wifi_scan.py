@@ -205,6 +205,21 @@ def _darwin_wifi_interface_name() -> str:
     return "en0"
 
 
+# Raspberry Pi Imager and similar images name the NM profile, not the SSID.
+_GENERIC_WIFI_PROFILE_NAMES = frozenset(
+    {
+        "preconfigured",
+        "hotspot",
+        "wifi",
+        "wi-fi",
+        "wireless",
+        "lo",
+        "--",
+        "unknown",
+    }
+)
+
+
 def _linux_ssid_token(raw: str) -> str:
     ssid = str(raw or "").strip()
     if not ssid or ssid == "--":
@@ -212,22 +227,38 @@ def _linux_ssid_token(raw: str) -> str:
     return ssid
 
 
+def _looks_like_generic_wifi_profile(name: str) -> bool:
+    token = str(name or "").strip().casefold()
+    if not token:
+        return True
+    if token in _GENERIC_WIFI_PROFILE_NAMES:
+        return True
+    return token.startswith("wired connection")
+
+
 def _current_connected_ssid_linux() -> str:
     ssid = _linux_nmcli_dev_wifi_active()
     if ssid:
         return ssid
-    ssid = _linux_nmcli_active_wifi_connection()
+    ssid = _linux_nmcli_active_connection_ssid()
     if ssid:
         return ssid
     return _linux_iwgetid()
 
 
 def _linux_nmcli_dev_wifi_active() -> str:
+    ssid = _linux_nmcli_wifi_list_marked("ACTIVE", "yes")
+    if ssid:
+        return ssid
+    return _linux_nmcli_wifi_list_marked("IN-USE", "*")
+
+
+def _linux_nmcli_wifi_list_marked(field: str, marker: str) -> str:
     if not shutil.which("nmcli"):
         return ""
     try:
         proc = subprocess.run(
-            ["nmcli", "-t", "-f", "ACTIVE,SSID", "dev", "wifi"],
+            ["nmcli", "-t", "-f", f"{field},SSID", "dev", "wifi"],
             capture_output=True,
             text=True,
             timeout=8.0,
@@ -235,12 +266,14 @@ def _linux_nmcli_dev_wifi_active() -> str:
         )
     except (OSError, subprocess.TimeoutExpired):
         return ""
+    want = str(marker or "").strip()
     for line in proc.stdout.splitlines():
         parts = line.split(":", 1)
-        if len(parts) == 2 and parts[0].strip() == "yes":
-            ssid = _linux_ssid_token(parts[1])
-            if ssid:
-                return ssid
+        if len(parts) != 2 or parts[0].strip() != want:
+            continue
+        ssid = _linux_ssid_token(parts[1])
+        if ssid:
+            return ssid
     return ""
 
 
@@ -266,6 +299,49 @@ def _linux_nmcli_active_wifi_connection() -> str:
         if kind in ("802-11-wireless", "wifi", "wireless") and name:
             return name
     return ""
+
+
+def _linux_nmcli_connection_ssid(profile: str) -> str:
+    """SSID stored on a NetworkManager profile (not the profile's display name)."""
+    name = str(profile or "").strip()
+    if not name or not shutil.which("nmcli"):
+        return ""
+    try:
+        proc = subprocess.run(
+            ["nmcli", "-t", "-f", "802-11-wireless.ssid", "connection", "show", name],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if proc.returncode != 0:
+        return ""
+    for raw in (proc.stdout or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if ":" in line:
+            key, value = line.split(":", 1)
+            if key.strip().casefold().endswith("ssid"):
+                return _linux_ssid_token(value)
+            continue
+        return _linux_ssid_token(line)
+    return ""
+
+
+def _linux_nmcli_active_connection_ssid() -> str:
+    """SSID of the active Wi-Fi profile, ignoring generic Imager profile names."""
+    profile = _linux_nmcli_active_wifi_connection()
+    if not profile:
+        return ""
+    ssid = _linux_nmcli_connection_ssid(profile)
+    if ssid:
+        return ssid
+    if _looks_like_generic_wifi_profile(profile):
+        return ""
+    return profile
 
 
 def _linux_iwgetid() -> str:

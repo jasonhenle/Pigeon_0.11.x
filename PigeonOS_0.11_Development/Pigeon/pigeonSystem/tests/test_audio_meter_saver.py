@@ -136,13 +136,32 @@ class AudioMeterRasterTests(unittest.TestCase):
         self.assertGreater(int(left_band), int(right_band) * 10)
 
 
+def _meter(*, fill: float, cal_dbfs: float = -20.0) -> am.MeterLevels:
+    return am.MeterLevels(
+        rms_l=0.1,
+        rms_r=0.1,
+        env_l=0.1,
+        env_r=0.1,
+        dbfs_l=cal_dbfs,
+        dbfs_r=cal_dbfs,
+        cal_dbfs_l=cal_dbfs,
+        cal_dbfs_r=cal_dbfs,
+        fill_l=fill,
+        fill_r=fill,
+        seg_l=3,
+        seg_r=3,
+        rms_lfe=0.0,
+        env_lfe=0.0,
+        lfe_fill=0.0,
+    )
+
+
 class ProgramAudioPresentTests(unittest.TestCase):
     def tearDown(self) -> None:
         am._latest = am._SILENCE
         am._last_pcm_mono = 0.0
         am._capture_dead = False
-        am._program_audio_until = 0.0
-        am._program_audio_session_until = 0.0
+        am._reset_program_audio_hiss()
 
     def test_session_hold_outlasts_short_gate(self) -> None:
         now = time.monotonic()
@@ -156,23 +175,7 @@ class ProgramAudioPresentTests(unittest.TestCase):
 
     def test_loud_fill_arms_session_hold(self) -> None:
         now = time.monotonic()
-        am._latest = am.MeterLevels(
-            rms_l=0.1,
-            rms_r=0.1,
-            env_l=0.1,
-            env_r=0.1,
-            dbfs_l=-20.0,
-            dbfs_r=-20.0,
-            cal_dbfs_l=-20.0,
-            cal_dbfs_r=-20.0,
-            fill_l=0.2,
-            fill_r=0.2,
-            seg_l=3,
-            seg_r=3,
-            rms_lfe=0.0,
-            env_lfe=0.0,
-            lfe_fill=0.0,
-        )
+        am._latest = _meter(fill=0.2)
         am._last_pcm_mono = now
         am._capture_dead = False
         am._program_audio_until = 0.0
@@ -180,6 +183,51 @@ class ProgramAudioPresentTests(unittest.TestCase):
         self.assertTrue(am.program_audio_present())
         self.assertTrue(am.program_audio_session_present())
         self.assertGreater(am._program_audio_session_until, now + 60.0)
+
+    def _feed_steady_fill(self, fill: float, *, seconds: float = 8.0) -> float:
+        t0 = time.monotonic()
+        last = t0
+        steps = int(seconds / am.HISS_NOTE_S) + 2
+        for i in range(steps):
+            last = t0 + i * am.HISS_NOTE_S
+            am._note_program_fill(fill, now=last)
+        return last
+
+    def test_persistent_hiss_is_not_program_audio(self) -> None:
+        now = time.monotonic()
+        self._feed_steady_fill(0.08)
+        am._latest = _meter(fill=0.08, cal_dbfs=-48.0)
+        am._last_pcm_mono = now
+        am._capture_dead = False
+        am._program_audio_until = now + 2.0
+        am._program_audio_session_until = now + 90.0
+        self.assertTrue(am.persistent_hiss_present())
+        self.assertFalse(am.program_audio_present())
+        self.assertFalse(am.program_audio_session_present())
+        self.assertEqual(am._program_audio_session_until, 0.0)
+
+    def test_steady_hiss_never_arms_session_hold(self) -> None:
+        now = time.monotonic()
+        self._feed_steady_fill(0.09, seconds=0.7)
+        am._latest = _meter(fill=0.09, cal_dbfs=-48.0)
+        am._last_pcm_mono = now
+        self.assertTrue(am.program_audio_present())
+        self.assertEqual(am._program_audio_session_until, 0.0)
+        self._feed_steady_fill(0.09)
+        self.assertTrue(am.persistent_hiss_present())
+        self.assertFalse(am.program_audio_present())
+        self.assertFalse(am.program_audio_session_present())
+
+    def test_program_hit_clears_hiss(self) -> None:
+        last = self._feed_steady_fill(0.08)
+        self.assertTrue(am.persistent_hiss_present())
+        hit_at = last + am.HISS_NOTE_S
+        am._note_program_fill(0.55, now=hit_at)
+        am._latest = _meter(fill=0.55)
+        am._last_pcm_mono = time.monotonic()
+        self.assertFalse(am.persistent_hiss_present(now=hit_at))
+        self.assertTrue(am.program_audio_present())
+        self.assertTrue(am.program_audio_session_present())
 
 
 class StereoMeterWidgetLayoutTests(unittest.TestCase):

@@ -96,17 +96,18 @@ else
 fi
 
 pigeon_prepare_runtime_dirs "${INSTALL_DIR}"
+chmod +x "${INSTALL_DIR}/installer/run_pigeon_0_11.command" "${INSTALL_DIR}/installer/run_pigeon_0_11.sh" 2>/dev/null || true
 chmod +x "${INSTALL_DIR}/installer/run_pigeon_0_10.command" "${INSTALL_DIR}/installer/run_pigeon_0_10.sh" 2>/dev/null || true
 chmod +x "${INSTALL_DIR}/installer/install_pigeon.sh" "${INSTALL_DIR}/installer/install_pigeon.command" 2>/dev/null || true
 
 echo "==> Creating Python environment and installing dependencies (first run may take a minute)…"
-bash "${INSTALL_DIR}/installer/run_pigeon_0_10.command" --help >/dev/null
+bash "${INSTALL_DIR}/installer/run_pigeon_0_11.command" --help >/dev/null
 
 if [[ "${MAKE_SHORTCUT}" -eq 1 ]]; then
   SHORTCUT="${HOME}/Desktop/Pigeon.command"
   cat > "${SHORTCUT}" <<EOF
 #!/bin/bash
-exec "${INSTALL_DIR}/installer/run_pigeon_0_10.command"
+exec "${INSTALL_DIR}/installer/run_pigeon_0_11.command"
 EOF
   chmod +x "${SHORTCUT}"
   echo "==> Desktop shortcut: ${SHORTCUT}"
@@ -116,7 +117,7 @@ echo ""
 echo "Pigeon ${VERSION} is installed."
 echo ""
 echo "  Install folder: ${INSTALL_DIR}"
-echo "  Launch:         ${INSTALL_DIR}/installer/run_pigeon_0_10.command"
+echo "  Launch:         ${INSTALL_DIR}/installer/run_pigeon_0_11.command"
 if [[ "${MAKE_SHORTCUT}" -eq 1 ]]; then
   echo "  Or double-click: ~/Desktop/Pigeon.command"
 fi

@@ -45,18 +45,28 @@ class NowPlayingZone:
         )
 
 
+# Zone 8 is Date / Weather / Volume / Time (zones 1–4 combined).
+_ZONE8_X = 44.5
+_ZONE8_Y = 34.0
+_ZONE8_W = 1190.0
+_ZONE8_H = (525.5 + 130.0) - _ZONE8_Y  # through the bottom of zone 4
+
 # index → zone. Restrictions: if this zone is on, listed zones must be off.
 NOW_PLAYING_ZONES: dict[int, NowPlayingZone] = {
-    1: NowPlayingZone(1, 44.5, 34.0, _ZONE_PORTRAIT_W, _ZONE_PORTRAIT_H, (6, 8)),
-    2: NowPlayingZone(2, 442.5, 34.0, _ZONE_PORTRAIT_W, _ZONE_PORTRAIT_H, (6, 7, 8)),
-    3: NowPlayingZone(3, 840.0, 34.0, _ZONE_PORTRAIT_W, _ZONE_PORTRAIT_H, (7, 8)),
-    4: NowPlayingZone(4, 44.5, 525.5, 1190.0, 130.0, (9,)),
-    5: NowPlayingZone(5, 44.5, 636.0, 1190.0, 130.0, (9,)),
-    6: NowPlayingZone(6, 44.5, 34.0, 793.0, _ZONE_PORTRAIT_H, (1, 2, 8)),
-    7: NowPlayingZone(7, 442.5, 34.0, 793.0, _ZONE_PORTRAIT_H, (2, 3, 8)),
-    8: NowPlayingZone(8, 44.5, 34.0, 1190.0, 109.0, (1, 2, 3, 6, 7)),
+    1: NowPlayingZone(1, 44.5, 34.0, _ZONE_PORTRAIT_W, _ZONE_PORTRAIT_H, (6, 8, 10)),
+    2: NowPlayingZone(2, 442.5, 34.0, _ZONE_PORTRAIT_W, _ZONE_PORTRAIT_H, (6, 7, 8, 10)),
+    3: NowPlayingZone(3, 840.0, 34.0, _ZONE_PORTRAIT_W, _ZONE_PORTRAIT_H, (7, 8, 10)),
+    4: NowPlayingZone(4, 44.5, 525.5, 1190.0, 130.0, (8, 9, 10)),
+    5: NowPlayingZone(5, 44.5, 636.0, 1190.0, 130.0, (9, 10)),
+    6: NowPlayingZone(6, 44.5, 34.0, 793.0, _ZONE_PORTRAIT_H, (1, 2, 8, 10)),
+    7: NowPlayingZone(7, 442.5, 34.0, 793.0, _ZONE_PORTRAIT_H, (2, 3, 8, 10)),
+    8: NowPlayingZone(8, _ZONE8_X, _ZONE8_Y, _ZONE8_W, _ZONE8_H, (1, 2, 3, 4, 6, 7, 10)),
     # Idle clock saver: whole design frame (digital clocksaver / centered clock widget).
-    9: NowPlayingZone(9, 0.0, 0.0, float(DESIGN_W), float(DESIGN_H), (1, 2, 3, 4, 5, 6, 7, 8)),
+    9: NowPlayingZone(9, 0.0, 0.0, float(DESIGN_W), float(DESIGN_H), (1, 2, 3, 4, 5, 6, 7, 8, 10)),
+    # Pausesaver: full display, covering zones 0–9.
+    10: NowPlayingZone(
+        10, 0.0, 0.0, float(DESIGN_W), float(DESIGN_H), (1, 2, 3, 4, 5, 6, 7, 8, 9)
+    ),
 }
 
 # Widget-local geometry (SVG viewBox space) for zones 1–3.
@@ -174,16 +184,6 @@ STATUS_BAR_ELAPSED_FADE_PX = 56.0
 # Crossfade service in once traveling elapsed has cleared it.
 STATUS_BAR_HANDOFF_S = 0.45
 
-# Current-time readout hangs from the top of the frame and may overlap
-# the widget row slightly so the type can read larger than the 34px margin.
-NP_HEADER_CLOCK_BASELINE_Y = 34.0
-NP_HEADER_CLOCK_SIZE_PX = 64
-NP_HEADER_CLOCK_TOP_PAD_PX = 6.0
-NP_HEADER_CLOCK_BG_PAD_X = 22.0
-NP_HEADER_CLOCK_BG_PAD_Y = 10.0
-NP_HEADER_CLOCK_BG_RADIUS = 16.0
-NP_HEADER_CLOCK_BG_OPACITY = 1.0
-
 # Clock widget viewBox + header / digital baselines (widget-local).
 CLOCK_VIEW_W = 400.0
 CLOCK_VIEW_H = 488.11
@@ -204,6 +204,10 @@ VOLUME_SOURCE_LOCAL = (125.39, 214.75)
 VOLUME_VALUE_LOCAL = (63.59, 324.9)
 VOLUME_SCALE_LOCAL = (152.28, 420.28)
 VOLUME_FORMAT_SIZE_PX = 48
+# Header clock uses the same Sharp Sans extrabold size as the input label.
+NP_HEADER_CLOCK_SIZE_PX = VOLUME_FORMAT_SIZE_PX
+# Keep zone-6 TT / album art below the shared header label baseline.
+NP_ZONE6_ART_MIN_TOP_PX = 16.0
 VOLUME_SOURCE_SIZE_PX = 48
 VOLUME_VALUE_SIZE_PX = 125
 VOLUME_SCALE_SIZE_PX = 100
@@ -395,7 +399,7 @@ def tt_countdown_content_center_shift(
     group_h = tt_h + g + trt_h
     if group_h <= 0.0:
         return 0.0
-    desired_top = (float(view_h) - group_h) / 2.0
+    desired_top = max(float(NP_ZONE6_ART_MIN_TOP_PX), (float(view_h) - group_h) / 2.0)
     return group_top - desired_top
 
 
@@ -463,7 +467,7 @@ def tt_countdown_volume_align_dy(
         return 0.0
     desired_top = float(volume_cy) - height / 2.0
     max_top = float(zone_bottom) - height
-    min_top = float(zone_top)
+    min_top = float(zone_top) + float(NP_ZONE6_ART_MIN_TOP_PX)
     if max_top < min_top:
         return 0.0
     clamped_top = min(max(desired_top, min_top), max_top)
@@ -495,6 +499,10 @@ def zone6_span_widget(assignments: tuple[str, ...] | list[str]) -> str:
         zones.append("")
     if tt_countdown_16x9_zone(assignments) == 6:
         return TT_COUNTDOWN_16X9_WIDGET
+    if zones[0] == "clock_saver":
+        return "clock_saver"
+    if zones[0] == "pausesaver":
+        return "pausesaver"
     if zones[0] == "clock_16x9":
         return "clock"
     if zones[0] == "visualizer":
@@ -895,6 +903,68 @@ def now_playing_header_clock_text(now) -> str:
     return f"{hour}:{minute:02d}{suffix}"
 
 
+# Cap-height / em for Sharp Sans Extrabold at the chrome size. Used so the
+# clock and input label stay aligned while their ink is vertically centered
+# between the screen top and the 1×1 album-art top.
+NP_HEADER_INK_FRAC = 0.70
+NP_HEADER_BASELINE_NUDGE_PX = 15.0
+MUSIC_TITLE_BAND_INSET_PX = 8.0
+
+
+def zone6_1x1_album_art_rect() -> tuple[float, float, float, float]:
+    """Design-space ``(x, y, w, h)`` of the square album in zone 6."""
+    z = NOW_PLAYING_ZONES[6]
+    view_w, view_h = float(z.w), float(z.h)
+    lx, ly, lw, lh = tt_countdown_centered_art_rect(
+        1.0, 1.0, view_w=view_w, view_h=view_h
+    )
+    x0, y0 = design_xy_from_local(z, lx, ly, view_w=view_w, view_h=view_h)
+    x1, y1 = design_xy_from_local(z, lx + lw, ly + lh, view_w=view_w, view_h=view_h)
+    return (float(x0), float(y0), float(x1 - x0), float(y1 - y0))
+
+
+def zone6_1x1_album_art_top() -> float:
+    return float(zone6_1x1_album_art_rect()[1])
+
+
+def zone6_1x1_album_art_bottom() -> float:
+    _x, y, _w, h = zone6_1x1_album_art_rect()
+    return float(y + h)
+
+
+def np_header_ink_height() -> float:
+    return float(NP_HEADER_CLOCK_SIZE_PX) * float(NP_HEADER_INK_FRAC)
+
+
+def np_label_baseline_y() -> float:
+    """Shared baseline for the header clock and volume / levels input label.
+
+    Vertically centers the chrome ink between the top of the screen and the
+    top of the 1×1 album art in zone 6.
+    """
+    art_top = zone6_1x1_album_art_top()
+    ink_h = np_header_ink_height()
+    return (float(art_top) + float(ink_h)) * 0.5 + float(NP_HEADER_BASELINE_NUDGE_PX)
+
+
+def header_clock_baseline_y() -> float:
+    """Design-Y baseline shared with the volume / levels input label."""
+    return np_label_baseline_y()
+
+
+def music_title_band_xywh() -> tuple[int, int, int, int]:
+    """Full-width band from the 1×1 album bottom to the status-bar top."""
+    z4 = NOW_PLAYING_ZONES[4]
+    z5 = NOW_PLAYING_ZONES[5]
+    inset = float(MUSIC_TITLE_BAND_INSET_PX)
+    x = int(round(z4.x))
+    w = max(1, int(round(z4.w)))
+    y = zone6_1x1_album_art_bottom() + inset
+    bottom = float(z5.y) - inset
+    h = max(8, int(round(bottom - y)))
+    return x, int(round(y)), w, h
+
+
 def header_clock_center_x(
     assignments: tuple[str, ...] | list[str] | None = None,
 ) -> float:
@@ -921,6 +991,32 @@ def status_bar_service_has_room(
     if service_w <= 0:
         return False
     return float(elapsed_x) >= float(service_x) + float(service_w) + float(gap)
+
+
+def clock_saver_zone8_xywh() -> tuple[int, int, int, int]:
+    """Date / weather / volume / time well (zones 1–4)."""
+    return NOW_PLAYING_ZONES[8].xywh
+
+
+def clock_saver_zone5_xywh() -> tuple[int, int, int, int]:
+    """Seconds track well."""
+    return NOW_PLAYING_ZONES[5].xywh
+
+
+def clock_saver_scaled_source_xywh() -> tuple[int, int, int, int]:
+    """Union of zone 8 + zone 5, scaled together into zone 6."""
+    z8 = NOW_PLAYING_ZONES[8]
+    z5 = NOW_PLAYING_ZONES[5]
+    x = min(float(z8.x), float(z5.x))
+    y = min(float(z8.y), float(z5.y))
+    right = max(float(z8.x) + float(z8.w), float(z5.x) + float(z5.w))
+    bottom = max(float(z8.y) + float(z8.h), float(z5.y) + float(z5.h))
+    return (
+        int(round(x)),
+        int(round(y)),
+        max(1, int(round(right - x))),
+        max(1, int(round(bottom - y))),
+    )
 
 
 def clock_saver_seconds_filled(second: int) -> int:

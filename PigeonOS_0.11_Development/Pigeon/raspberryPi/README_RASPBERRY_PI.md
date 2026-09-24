@@ -32,7 +32,7 @@ This downloads the latest **[GitHub Release](https://github.com/jasonhenle/Pigeo
 ## After install
 
 - **Run Pigeon** from the Desktop shortcut, or:  
-  `cd ~/Pigeon_*/ && ./installer/run_pigeon_0_10.sh`
+  `cd ~/Pigeon_*/ && ./installer/run_pigeon_0_11.sh`
 - **Settings** live in `~/.pigeon_0_6/` (copy from Mac for TMDb key + Apple TV pairing — see `installer/setup/README.txt`).
 - **In-app updates:** Settings → **Updates** (pulls from GitHub `main`).
 - **Manual update:** `bash ~/Pigeon_*/installer/pi_update_from_github.sh`
@@ -42,7 +42,7 @@ This downloads the latest **[GitHub Release](https://github.com/jasonhenle/Pigeo
 Fullscreen by default (`PIGEON_PI_FULLSCREEN=1`). UI is 1280×800; other display shapes are letterboxed or pillarboxed without stretching.
 
 ```bash
-PIGEON_PI_FULLSCREEN=0 ./installer/run_pigeon_0_10.sh
+PIGEON_PI_FULLSCREEN=0 ./installer/run_pigeon_0_11.sh
 ```
 
 ## Autostart

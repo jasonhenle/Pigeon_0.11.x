@@ -680,10 +680,13 @@ def _render_volume_widget_bgra(
         VOLUME_VIEW_W,
     )
     from pigeon.widgets.view_circles import (
+        _VOLUME_CLOCK_GAP_PX,
+        _VOLUME_TEXT_INNER_FIT,
         _draw_progress_ring,
         _paste_centered,
         _paste_patch_bgra,
         _rasterize_named_widget,
+        _volume_hhmm_patch,
         _volume_readout_patch,
         np_theme_from_settings,
     )
@@ -717,12 +720,25 @@ def _render_volume_widget_bgra(
         fill_opacity=1.0,
         stroke=0,
     )
-    vol_p, _, _ = _volume_readout_patch(
+    vol_p, vol_w, vol_h = _volume_readout_patch(
         _preview_volume_text(state),
         inner_r=VOLUME_INNER_R,
         max_size_px=max(12, int(round(VOLUME_INNER_R * 0.9))),
     )
     _paste_centered(out, vol_p, VOLUME_LOCAL_CX, VOLUME_LOCAL_CY)
+    inner_r = float(VOLUME_INNER_R) * float(_VOLUME_TEXT_INNER_FIT)
+    vol_bottom = float(VOLUME_LOCAL_CY) + float(vol_h) * 0.5
+    room_h = (float(VOLUME_LOCAL_CY) + inner_r) - vol_bottom - float(
+        _VOLUME_CLOCK_GAP_PX
+    )
+    clock_p, _cw, ch = _volume_hhmm_patch(
+        datetime.now(),
+        max_w=max(12, int(vol_w)),
+        max_h=max(10, int(room_h)),
+    )
+    if ch > 1:
+        clock_cy = vol_bottom + float(_VOLUME_CLOCK_GAP_PX) + float(ch) * 0.5
+        _paste_centered(out, clock_p, VOLUME_LOCAL_CX, clock_cy)
     return out
 
 

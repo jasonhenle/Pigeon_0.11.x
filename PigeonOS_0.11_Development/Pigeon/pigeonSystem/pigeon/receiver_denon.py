@@ -41,6 +41,8 @@ class ReceiverPollResult:
     # True when the receiver answered but reports OFF/STANDBY power — callers
     # should treat this the same as an absent receiver (no metadata shown).
     standby: bool = False
+    # Current HDMI / source input as the AVR labels it (``SI`` / InputFuncSelect).
+    input_label: str = ""
 
 
 def _normalize_host(host: str) -> str:
@@ -81,6 +83,25 @@ _APPCOMMAND_XML = b"""<?xml version="1.0" encoding="utf-8"?>
   <cmd id="1">GetMuteStatus</cmd>
 </tx>
 """
+
+# Newline-separated AppCommand body — some firmwares ignore a single-line POST.
+_GET_RENAME_SOURCE_XML = b"""<?xml version="1.0" encoding="utf-8"?>
+<tx>
+<cmd id="1">GetRenameSource</cmd>
+</tx>
+"""
+_GET_SOURCE_RENAME_0300_XML = b"""<?xml version="1.0" encoding="utf-8"?>
+<tx>
+ <cmd id="3">
+  <name>GetSourceRename</name>
+  <list/>
+ </cmd>
+</tx>
+"""
+# host -> (fetched_mono, {normalized_factory: custom_label})
+_SOURCE_RENAME_CACHE: dict[str, tuple[float, dict[str, str]]] = {}
+_SOURCE_RENAME_TTL_S = 120.0
+_SOURCE_RENAME_FAIL_TTL_S = 15.0
 
 
 def _post_fetch(host: str, path: str, body: bytes, timeout: float, *, scheme: str = "http") -> str | None:
@@ -168,7 +189,7 @@ def send_denon_http_command(
             req = urllib.request.Request(
                 url,
                 headers={
-                    "User-Agent": "Mozilla/5.0 (compatible; Pigeon/0.10; +Denon-AppDirect)",
+                    "User-Agent": "Mozilla/5.0 (compatible; Pigeon/0.11; +Denon-AppDirect)",
                     "Accept": "*/*",
                 },
             )
@@ -1111,6 +1132,185 @@ def looks_like_hdmi_input_selector(value: str) -> bool:
     return False
 
 
+_INPUT_FACTORY_LABELS = {
+    "sat/cbl": "SAT/CBL",
+    "cbl/sat": "SAT/CBL",
+    "sat": "SAT",
+    "cbl": "CBL",
+    "bd": "BLU-RAY",
+    "bluray": "BLU-RAY",
+    "dvd": "DVD",
+    "game": "GAME",
+    "game2": "GAME 2",
+    "mplay": "MEDIA PLAYER",
+    "tv": "TV",
+    "tvaudio": "TV AUDIO",
+    "cd": "CD",
+    "tuner": "TUNER",
+    "phono": "PHONO",
+    "net": "NETWORK",
+    "network": "NETWORK",
+    "heos": "HEOS",
+    "usb": "USB",
+    "aux": "AUX",
+    "aux1": "AUX 1",
+    "aux2": "AUX 2",
+    "vcr": "VCR",
+    "dvr": "DVR",
+    "dock": "DOCK",
+    "ipod": "IPOD",
+    "source": "SOURCE",
+    "unbal": "UNBAL",
+}
+
+
+def format_receiver_input_label(raw: str) -> str:
+    """Pretty-print a Denon ``SI`` / InputFuncSelect token for the volume caption."""
+    s = str(raw or "").strip()
+    if not s:
+        return ""
+    if s.upper().startswith("SI") and len(s) > 2 and not s[2:3].isalnum():
+        s = s[2:].strip()
+    compact = re.sub(r"\s+", "", s.lower())
+    mapped = _INPUT_FACTORY_LABELS.get(compact)
+    if mapped:
+        return mapped
+    if re.fullmatch(r"hdmi\s*\d+", s, re.I):
+        return re.sub(r"(?i)hdmi\s*", "HDMI ", s).strip().upper()
+    if re.fullmatch(r"aux\s*\d+", s, re.I):
+        return re.sub(r"(?i)aux\s*", "AUX ", s).strip().upper()
+    return re.sub(r"\s+", " ", s).upper()
+
+
+def _input_norm(raw: str) -> str:
+    """Collapse factory / SI / rename-list aliases to one lookup key."""
+    t = re.sub(r"[^a-z0-9]+", "", str(raw or "").lower())
+    if t in {"satcbl", "cblsat", "sat", "cbl"}:
+        return "satcbl"
+    if t in {"bd", "bluray"}:
+        return "bluray"
+    if t in {"mplay", "mediaplayer"}:
+        return "mplay"
+    if t in {"game", "game1"}:
+        return "game"
+    if t in {"tv", "tvaudio"}:
+        return "tvaudio"
+    if t in {"net", "network"}:
+        return "network"
+    if t in {"heos", "heosmusic"}:
+        return "network"
+    return t
+
+
+def _tidy_custom_input_label(raw: str) -> str:
+    return re.sub(r"\s+", " ", str(raw or "")).strip()
+
+
+def parse_denon_source_renames(xml_text: str) -> dict[str, str]:
+    """Map normalized factory input keys to the AVR's custom source names."""
+    out: dict[str, str] = {}
+    body = str(xml_text or "").strip()
+    if not body:
+        return out
+    try:
+        root = ET.fromstring(body)
+    except ET.ParseError:
+        return out
+    for el in root.iter():
+        tag = (el.tag or "").split("}")[-1].lower()
+        if tag == "param":
+            name = (el.get("name") or "").strip()
+            rename = _tidy_custom_input_label(el.text or "")
+            if name and rename:
+                out[_input_norm(name)] = rename
+            continue
+        if tag != "list":
+            continue
+        name = rename = ""
+        for ch in list(el):
+            ct = (ch.tag or "").split("}")[-1].lower()
+            if ct == "name":
+                name = (ch.text or "").strip()
+            elif ct == "rename":
+                rename = _tidy_custom_input_label(ch.text or "")
+        if name and rename:
+            out[_input_norm(name)] = rename
+    return out
+
+
+def fetch_denon_source_renames(host: str, timeout: float = 1.2) -> dict[str, str]:
+    """Cached ``GetRenameSource`` / ``GetSourceRename`` map for ``host``."""
+    h = _normalize_host(host)
+    if not h:
+        return {}
+    now = time.monotonic()
+    cached = _SOURCE_RENAME_CACHE.get(h)
+    if cached is not None:
+        age = now - cached[0]
+        ttl = _SOURCE_RENAME_TTL_S if cached[1] else _SOURCE_RENAME_FAIL_TTL_S
+        if age < ttl:
+            return dict(cached[1])
+    parsed: dict[str, str] = {}
+    variants = _receiver_probe_host_variants(h)
+    tries: list[tuple[str, str, bytes]] = []
+    for variant in variants:
+        tries.append((variant, "/goform/AppCommand.xml", _GET_RENAME_SOURCE_XML))
+        tries.append((variant, "/goform/AppCommand0300.xml", _GET_SOURCE_RENAME_0300_XML))
+    for variant, path, body in tries:
+        t = min(1.2, max(0.4, float(timeout)))
+        xml = _post_fetch(variant, path, body, t, scheme="http")
+        parsed = parse_denon_source_renames(xml or "")
+        if parsed:
+            break
+    _SOURCE_RENAME_CACHE[h] = (now, parsed)
+    return dict(parsed)
+
+
+def _renames_from_telnet_fields(md: dict[str, str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for k, v in md.items():
+        ks = str(k or "")
+        label = _tidy_custom_input_label(v)
+        if not label:
+            continue
+        if ks.startswith("SSFUN_") and ks != "SSFUN_FUNC":
+            out[_input_norm(ks[6:])] = label
+    ssfun = _tidy_custom_input_label(_denon_field_ci(md, "SSFUN"))
+    func = _denon_field_ci(md, "SSFUN_FUNC")
+    if ssfun and func:
+        out.setdefault(_input_norm(func), ssfun)
+    return out
+
+
+def pick_receiver_input_label(
+    d: dict[str, str] | None,
+    renames: dict[str, str] | None = None,
+) -> str:
+    """Current AVR input: custom source name when set, else the factory SI label."""
+    md = d if isinstance(d, dict) else {}
+    raw = _denon_field_ci(
+        md,
+        "SI",
+        "InputFuncSelect",
+        "inputFuncSelect",
+        "selectInput",
+        "InputFunction",
+    )
+    maps = dict(renames or {})
+    maps.update(_renames_from_telnet_fields(md))
+    custom = _tidy_custom_input_label(maps.get(_input_norm(raw), "")) if raw else ""
+    if not custom:
+        # Last-resort: a lone SSFUN/RenameSource value that is not a factory selector.
+        lone = _tidy_custom_input_label(
+            _denon_field_ci(md, "SSFUN", "RenameSource", "renamesource")
+        )
+        if lone and not looks_like_hdmi_input_selector(lone):
+            custom = lone
+    if custom:
+        return custom
+    return format_receiver_input_label(raw)
+
+
 def _pick_incoming_audio_format(d: dict[str, str]) -> str:
     for key in _INCOMING_FORMAT_KEYS:
         v = _denon_field_ci(d, key)
@@ -1190,8 +1390,16 @@ def poll_denon_like_receiver(
         return ReceiverPollResult(True, vol_s, "", "", telnet_state, standby=True)
 
     # Incoming = source audio format (codec/signal). Playback = surround/output mode (``MS``).
-    # Never use ``SI`` (HDMI input selector such as SAT/CBL) for the widget line.
+    # Never use ``SI`` (HDMI input selector such as SAT/CBL) for the format line.
     incoming = _pick_incoming_audio_format(d)
+    try:
+        rename_t = min(1.2, max(0.4, float(timeout) * 0.3))
+        if deadline is not None:
+            rename_t = min(rename_t, max(0.0, deadline - time.monotonic()))
+        renames = fetch_denon_source_renames(h, timeout=rename_t) if rename_t >= 0.35 else {}
+    except Exception:
+        renames = {}
+    input_label = pick_receiver_input_label(d, renames=renames)
 
     cfg = _denon_field_ci(d, "MS", "selectSurround", "SurrMode", "surroundmode").strip()
     if cfg and looks_like_hdmi_input_selector(cfg):
@@ -1204,7 +1412,7 @@ def poll_denon_like_receiver(
     if cfg:
         cfg = cfg.lower()
 
-    return ReceiverPollResult(True, vol_s, incoming, cfg, telnet_state)
+    return ReceiverPollResult(True, vol_s, incoming, cfg, telnet_state, input_label=input_label)
 
 
 def _darwin_extra_lan_ipv4() -> list[str]:

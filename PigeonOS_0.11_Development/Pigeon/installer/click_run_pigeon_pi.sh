@@ -8,14 +8,29 @@ ROOT="$(cd "${HERE}/.." && pwd)"
 source "${HERE}/common.sh"
 INSTALL_DIR="${PIGEON_INSTALL_DIR:-${HOME}/$(pigeon_install_dir_basename "${ROOT}")}"
 
+if [[ -x "${INSTALL_DIR}/installer/run_pigeon_0_11.sh" ]]; then
+  cd "${INSTALL_DIR}"
+  exec ./installer/run_pigeon_0_11.sh
+fi
+
 if [[ -x "${INSTALL_DIR}/installer/run_pigeon_0_10.sh" ]]; then
   cd "${INSTALL_DIR}"
   exec ./installer/run_pigeon_0_10.sh
 fi
 
+if [[ -x "${HERE}/run_pigeon_0_11.sh" ]]; then
+  cd "${HERE}"
+  exec ./run_pigeon_0_11.sh
+fi
+
 if [[ -x "${HERE}/run_pigeon_0_10.sh" ]]; then
   cd "${HERE}"
   exec ./run_pigeon_0_10.sh
+fi
+
+if [[ -x "${ROOT}/run_pigeon_0_11.sh" ]]; then
+  cd "${ROOT}"
+  exec ./run_pigeon_0_11.sh
 fi
 
 if [[ -x "${ROOT}/run_pigeon_0_10.sh" ]]; then

@@ -175,6 +175,13 @@ def clock_widget_analog(state: MainSettingsState | None = None) -> bool:
 
 def clock_saver_analog(state: MainSettingsState | None = None) -> bool:
     """True when idle zone-9 saver should show the centered analog clock widget."""
+    try:
+        from pigeon.auto_widgets import auto_clocksaver_wants_digital
+
+        if auto_clocksaver_wants_digital():
+            return False
+    except Exception:
+        pass
     return clock_widget_analog(state)
 
 

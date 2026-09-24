@@ -27,6 +27,7 @@ import sys
 import threading
 import time
 import xml.etree.ElementTree as ET
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -166,8 +167,21 @@ _capture_dead = False
 PROGRAM_AUDIO_ON_FILL = 0.05
 PROGRAM_AUDIO_HOLD_S = 2.5
 PROGRAM_AUDIO_SESSION_HOLD_S = 120.0
+# Session / NP wake require more than a barely-open gate. Analog hiss often
+# sits just above ``PROGRAM_AUDIO_ON_FILL`` and must not look like a program.
+PROGRAM_AUDIO_SESSION_ON_FILL = 0.16
+HISS_WINDOW_S = 8.0
+HISS_NOTE_S = 0.10
+HISS_MIN_SAMPLES = 16
+HISS_MAX_SPAN = 0.08
+HISS_MAX_MEAN_FILL = 0.32
+HISS_CLEAR_FILL = 0.40
 _program_audio_until = 0.0
 _program_audio_session_until = 0.0
+_hiss_lock = threading.Lock()
+_hiss_fills: deque[tuple[float, float]] = deque()
+_hiss_last_note_mono = 0.0
+_persistent_hiss = False
 _band_bins: np.ndarray | None = None
 
 _art_lock = threading.Lock()
@@ -528,11 +542,99 @@ def audio_connection_ok() -> bool:
     return True
 
 
+def _reset_program_audio_hiss() -> None:
+    """Drop the hiss window and program-audio holds (tests / capture restart)."""
+    global _program_audio_until, _program_audio_session_until
+    global _hiss_last_note_mono, _persistent_hiss
+    _program_audio_until = 0.0
+    _program_audio_session_until = 0.0
+    _hiss_last_note_mono = 0.0
+    _persistent_hiss = False
+    with _hiss_lock:
+        _hiss_fills.clear()
+
+
+def _note_program_fill(level: float, now: float | None = None) -> None:
+    """Record a fill sample so a stationary hiss can be told from program."""
+    global _hiss_last_note_mono
+    t = float(time.monotonic() if now is None else now)
+    fill = max(0.0, float(level))
+    with _hiss_lock:
+        if _hiss_fills and (t - float(_hiss_last_note_mono)) < float(HISS_NOTE_S):
+            return
+        _hiss_last_note_mono = t
+        _hiss_fills.append((t, fill))
+        cutoff = t - float(HISS_WINDOW_S)
+        while _hiss_fills and _hiss_fills[0][0] < cutoff:
+            _hiss_fills.popleft()
+
+
+def _hiss_window_stats(
+    now: float | None = None,
+) -> tuple[int, float, float, float]:
+    """Return ``(count, mean, span, peak)`` for the recent fill window."""
+    t = float(time.monotonic() if now is None else now)
+    cutoff = t - float(HISS_WINDOW_S)
+    with _hiss_lock:
+        while _hiss_fills and _hiss_fills[0][0] < cutoff:
+            _hiss_fills.popleft()
+        samples = [float(fill) for _ts, fill in _hiss_fills]
+    if not samples:
+        return 0, 0.0, 0.0, 0.0
+    peak = max(samples)
+    low = min(samples)
+    mean = sum(samples) / float(len(samples))
+    return len(samples), mean, peak - low, peak
+
+
+def persistent_hiss_present(now: float | None = None) -> bool:
+    """True when the capture has sat on a near-constant low-level noise floor.
+
+    Analog hiss / ground buzz stays open enough to tick the gate, but it has
+    almost no dynamics. That must not count as program audio or the clock
+    saver can never intervene.
+    """
+    global _persistent_hiss
+    count, mean, span, peak = _hiss_window_stats(now)
+    if peak >= float(HISS_CLEAR_FILL) or mean >= float(HISS_CLEAR_FILL):
+        _persistent_hiss = False
+        return False
+    if count < int(HISS_MIN_SAMPLES):
+        return bool(_persistent_hiss)
+    if peak < float(PROGRAM_AUDIO_ON_FILL):
+        _persistent_hiss = False
+        return False
+    if span <= float(HISS_MAX_SPAN) and mean <= float(HISS_MAX_MEAN_FILL):
+        _persistent_hiss = True
+        return True
+    if span > float(HISS_MAX_SPAN):
+        _persistent_hiss = False
+        return False
+    return bool(_persistent_hiss)
+
+
+def _signal_is_stationary_low(level: float, now: float | None = None) -> bool:
+    """True when this sample still looks like hiss, not a program hit."""
+    if float(level) >= float(HISS_CLEAR_FILL):
+        return False
+    if persistent_hiss_present(now):
+        return True
+    count, _mean, span, peak = _hiss_window_stats(now)
+    if float(level) >= float(PROGRAM_AUDIO_SESSION_ON_FILL) and (
+        span > float(HISS_MAX_SPAN) or peak >= float(PROGRAM_AUDIO_SESSION_ON_FILL)
+    ):
+        return False
+    if count < int(HISS_MIN_SAMPLES):
+        return float(level) < float(PROGRAM_AUDIO_SESSION_ON_FILL)
+    return span <= float(HISS_MAX_SPAN) and float(level) <= float(HISS_MAX_MEAN_FILL)
+
+
 def program_audio_present() -> bool:
     """True while captured program is above the noise gate, with a short hold.
 
     Used to wake now-playing from the clock saver. USB being plugged in is not
-    enough — ``fill`` already sits at 0 for idle hiss.
+    enough — ``fill`` already sits at 0 for idle hiss. A persistent hiss that
+    sits just above the gate is also ignored so the saver can still arm.
     """
     global _program_audio_until, _program_audio_session_until
     now = time.monotonic()
@@ -540,10 +642,15 @@ def program_audio_present() -> bool:
         return now < _program_audio_until
     sample = _latest
     level = max(float(sample.fill_l), float(sample.fill_r), float(sample.lfe_fill))
+    if persistent_hiss_present(now):
+        _program_audio_until = 0.0
+        _program_audio_session_until = 0.0
+        return False
     fresh = _last_pcm_mono > 0.0 and (now - _last_pcm_mono) < 0.75
     if fresh and level >= float(PROGRAM_AUDIO_ON_FILL):
         _program_audio_until = now + float(PROGRAM_AUDIO_HOLD_S)
-        _program_audio_session_until = now + float(PROGRAM_AUDIO_SESSION_HOLD_S)
+        if not _signal_is_stationary_low(level, now):
+            _program_audio_session_until = now + float(PROGRAM_AUDIO_SESSION_HOLD_S)
         return True
     return now < _program_audio_until
 
@@ -554,9 +661,11 @@ def program_audio_session_present() -> bool:
     Movie quiet scenes drop below the gate for much longer than
     ``PROGRAM_AUDIO_HOLD_S``. The session hold keeps now-playing (and its
     artwork caches) up through those gaps; the clock saver only returns after
-    a full quiet stretch.
+    a full quiet stretch. Persistent hiss is not a session.
     """
     now = time.monotonic()
+    if persistent_hiss_present(now):
+        return False
     if program_audio_present():
         return True
     return now < _program_audio_session_until
@@ -669,15 +778,14 @@ def _push_scope_bass(y_lfe: np.ndarray) -> None:
 
 def _reset_spectrum() -> None:
     global _latest_spectrum, _spectrum_smooth, _pcm_ring_pos, _fft_chunk_i
-    global _scope_pos, _latest_scope, _program_audio_until, _program_audio_session_until
+    global _scope_pos, _latest_scope
     _spectrum_smooth[:] = 0.0
     _pcm_ring[:] = 0.0
     _pcm_ring_pos = 0
     _fft_chunk_i = 0
     _scope_ring[:] = 0.0
     _scope_pos = 0
-    _program_audio_until = 0.0
-    _program_audio_session_until = 0.0
+    _reset_program_audio_hiss()
     _spectrum_smooth[:] = 0.0
     _pcm_ring[:] = 0.0
     _pcm_ring_pos = 0
@@ -694,10 +802,22 @@ def default_audio_meter_svg_path(assets_dir: Path | str | None = None) -> Path:
     env = os.environ.get("PIGEON_AUDIO_METER_SVG", "").strip()
     if env:
         return Path(env).expanduser().resolve()
+    names = (
+        "clocksaver_audio_visualization_withLFE.svg",
+        "clocksaver_audio_visualization.svg",
+    )
+    roots: list[Path] = []
     if assets_dir is not None:
-        return Path(assets_dir) / "clocksaver_audio_visualization_withLFE.svg"
-    pigeon_root = Path(__file__).resolve().parents[3]
-    return pigeon_root / "pigeonAssets" / "clocksaver_audio_visualization_withLFE.svg"
+        roots.append(Path(assets_dir))
+    pigeon_root = Path(__file__).resolve().parents[3] / "pigeonAssets"
+    if pigeon_root not in roots:
+        roots.append(pigeon_root)
+    for root in roots:
+        for name in names:
+            path = root / name
+            if path.is_file():
+                return path
+    return roots[0] / names[0]
 
 
 def meter_bar_id(side: str) -> str:
@@ -1186,7 +1306,9 @@ _widget_native_buf: np.ndarray | None = None
 
 # Leave the lower fifth of the well for a volume readout; sit the bars
 # a little above the remaining center so they do not rest on the number.
+# Top band matches the volume-widget format line (AVR input label).
 STEREO_METER_BOTTOM_RESERVE_FRAC = 0.22
+STEREO_METER_TOP_RESERVE_FRAC = 0.04
 STEREO_METER_LIFT_FRAC = 0.04
 STEREO_METER_READOUT_CY_IN_BAND = 0.52
 
@@ -1194,6 +1316,11 @@ STEREO_METER_READOUT_CY_IN_BAND = 0.52
 def stereo_meter_volume_band_h(dest_h: int) -> int:
     """Height reserved under the NP levels bars for the volume number."""
     return max(0, int(round(max(1, int(dest_h)) * float(STEREO_METER_BOTTOM_RESERVE_FRAC))))
+
+
+def stereo_meter_caption_band_h(dest_h: int) -> int:
+    """Height reserved above the NP levels bars for the AVR input label."""
+    return max(0, int(round(max(1, int(dest_h)) * float(STEREO_METER_TOP_RESERVE_FRAC))))
 
 
 def levels_readout_center_y(zone_y: float, zone_h: float) -> float:
@@ -1283,8 +1410,9 @@ def render_stereo_meter_widget_bgra(
     nh, nw = int(native.shape[0]), int(native.shape[1])
     if nw < 1 or nh < 1:
         return out
+    top = stereo_meter_caption_band_h(dh)
     reserve = stereo_meter_volume_band_h(dh)
-    usable_h = max(1, dh - reserve)
+    usable_h = max(1, dh - reserve - top)
     inset = 0.88
     scale = min((dw * inset) / float(nw), (usable_h * inset) / float(nh))
     tw = max(1, int(round(nw * scale)))
@@ -1292,7 +1420,7 @@ def render_stereo_meter_widget_bgra(
     resized = cv2.resize(native, (tw, th), interpolation=cv_resize_interp(nw, nh, tw, th))
     ox = (dw - tw) // 2
     lift = int(round(dh * float(STEREO_METER_LIFT_FRAC)))
-    oy = max(0, (usable_h - th) // 2 - lift)
+    oy = top + max(0, (usable_h - th) // 2 - lift)
     y_a = max(0, oy)
     x_a = max(0, ox)
     y_b = min(dh, oy + th)
@@ -1454,6 +1582,9 @@ def _publish(
         lfe_fill=lfe_fill_from_calibrated_dbfs(cal_lfe),
     )
     _latest = sample
+    _note_program_fill(
+        max(float(sample.fill_l), float(sample.fill_r), float(sample.lfe_fill))
+    )
     return sample
 
 

@@ -1,6 +1,6 @@
-# PigeonOS 0.10 Development
+# PigeonOS 0.11 Development
 
-Active development for **PigeonOS 0.10** lives here.
+Active development for **PigeonOS 0.11** lives here.
 
 ```
 PigeonOS_0.11_Development/
@@ -11,16 +11,16 @@ PigeonOS_0.11_Development/
   README.md               This glossary + folder map
 ```
 
-**Mac:** `Pigeon/installer/run_pigeon_0_10.command` (or `run_pigeon_0_8.command` — same entrypoint for now)  
+**Mac:** `Pigeon/installer/run_pigeon_0_11.command` (or `run_pigeon_0_10.command` — same entrypoint)  
 **Pi:** see `Pigeon/installer/START-HERE.txt`  
 **Settings / credentials:** `~/.pigeon_0_6` (shared with earlier installs)
 
-**Desktop shortcuts:** `Pigeon (experiment).command`, `Pigeon (0.10).command`, `Pigeon (main).command`  
+**Desktop shortcuts:** `Pigeon (experiment).command`, `Pigeon (0.11).command`, `Pigeon (main).command`  
 (from `Pigeon/installer/setup_desktop_launchers.sh`)
 
 Previous 0.9 tree + GFX: `../Archive/PigeonOS_0.9_Development/` (+ `PigeonOS_0.9_GFX/`)  
 Previous 0.8 tree (code + design GFX): `../Archive/Pigeon_0.8.0_Development/`  
-Do **not** link new builds to Archive paths (use `PigeonOS_0.11_GFX/` for 0.10 design).
+Do **not** link new builds to Archive paths (use `PigeonOS_0.11_GFX/` for 0.11 design).
 
 ---
 
@@ -135,7 +135,7 @@ Env: `PIGEON_ROTARY_SERIAL=0` disables; `PIGEON_ADB_SERIAL` selects ADB device; 
 | Module | Role |
 |--------|------|
 | `pigeon_0_8.py` | Main application entry (filename retained in 0.9) |
-| `pigeon/version.py` | `0.10.x` version source of truth |
+| `pigeon/version.py` | `0.11.x` version source of truth |
 | `pigeon/rotary_serial.py` | USB / UNO Q rotary bridge |
 | `pigeon/hardware_protocol.py` | `SOURCE,TYPE,ID,DATA` parse / nav mapping |
 | `pigeon/view_one_variants.py` | View One variant resolution |
@@ -154,4 +154,4 @@ Env: `PIGEON_ROTARY_SERIAL=0` disables; `PIGEON_ADB_SERIAL` selects ADB device; 
 ## Versioning
 
 Bump **PATCH** in `Pigeon/pigeonSystem/pigeon/version.py` for every code change.  
-`MINOR=10` is the PigeonOS 0.10 line. Releases publish when `version.py` lands on **`main`**.
+`MINOR=11` is the PigeonOS 0.11 line. Releases publish when `version.py` lands on **`main`**.

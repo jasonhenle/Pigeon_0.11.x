@@ -478,6 +478,7 @@ class MainSettingsState:
     wifi_connect_started_mono: float = 0.0
     network_name: str = ""  # legacy alias; kept for cache sig compatibility
     version_string: str = "0.8.0"
+    exit_enabled: bool = True
     show_network_picker: bool = False
     network_picker_row: int = 0
     network_picker_scroll: int = 0
@@ -530,7 +531,7 @@ class MainSettingsState:
     preferences_zone_widgets: tuple[str, str, str, str, str] = (
         "tt_countdown_16x9",
         "",
-        "volume",
+        "audio_levels",
         "cast_info",
         "status_bar",
     )
@@ -987,8 +988,16 @@ class MainSettingsState:
                 else:
                     ring.append("main_network_picker_button")
             self.focus_ring = tuple(ring)
+        if not self.exit_enabled:
+            self.focus_ring = tuple(
+                fid for fid in self.focus_ring if fid != "main_exit_button"
+            )
         if not self.focus_ring:
-            self.focus_ring = ("main_exit_button",)
+            self.focus_ring = (
+                ("main_exit_button",)
+                if self.exit_enabled
+                else ("main_dual_location_button",)
+            )
         self.focus_index = int(self.focus_index) % len(self.focus_ring)
 
     @property
@@ -1504,7 +1513,7 @@ class MainSettingsState:
         self.update_github_branch = None
         self.update_checking = True
         self.update_changelog = "Checking GitHub for updates…"
-        ring = update_popup_focus_ring(update_available=False)
+        ring = update_popup_focus_ring(update_available=False, checking=True)
         self.update_popup_focus_index = ring.index("now") if "now" in ring else 0
 
     def close_update_popup(self) -> None:
@@ -1517,7 +1526,11 @@ class MainSettingsState:
     def navigate_update_popup(self, *, forward: bool = True) -> None:
         from pigeon.widgets.update_popup import update_popup_focus_ring
 
-        ring = update_popup_focus_ring(update_available=bool(self.update_available))
+        ring = update_popup_focus_ring(
+            update_available=bool(self.update_available),
+            checking=bool(self.update_checking),
+            applying=bool(self.update_applying),
+        )
         if not ring:
             return
         step = 1 if forward else -1
@@ -1527,7 +1540,11 @@ class MainSettingsState:
     def update_popup_focused_choice(self) -> str:
         from pigeon.widgets.update_popup import update_popup_focus_ring
 
-        ring = update_popup_focus_ring(update_available=bool(self.update_available))
+        ring = update_popup_focus_ring(
+            update_available=bool(self.update_available),
+            checking=bool(self.update_checking),
+            applying=bool(self.update_applying),
+        )
         if not ring:
             return "now"
         return ring[int(self.update_popup_focus_index) % len(ring)]
@@ -6079,6 +6096,9 @@ def apply_main_settings_svg_state(root: ET.Element, state: MainSettingsState) ->
     _set_visible(picker, bool(state.show_network_picker))
     _apply_scene_layer_visibility(root, state)
     _apply_keyboard_layer_visibility(root, state)
+    if not state.exit_enabled:
+        _set_visible(_find_by_logical_id(root, "main_exit_group"), False)
+        _set_visible(_find_by_logical_id(root, "main_exit_button"), False)
 
     kb_target = ""
     if state.keyboard is not None:
@@ -6752,6 +6772,7 @@ class MainSettingsWidget:
             bool(st.network_password_error),
             bool(st.wifi_connecting),
             st.version_string,
+            bool(st.exit_enabled),
             bool(st.show_network_picker),
             int(st.network_picker_row),
             int(st.network_picker_scroll),
@@ -8639,6 +8660,8 @@ class MainSettingsWidget:
 
         focused = st.focused_id
         action = _ACTIVATE_ACTIONS.get(focused, f"activate:{focused}")
+        if action == "exit" and not st.exit_enabled:
+            return "exit_locked"
         if action == "exit" and st.show_location_picker:
             st.exit_location_picker()
             try:

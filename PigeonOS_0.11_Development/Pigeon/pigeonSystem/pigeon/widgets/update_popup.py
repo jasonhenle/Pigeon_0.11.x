@@ -104,7 +104,15 @@ def default_update_popup_svg_path(assets_dir: Path | str | None = None) -> Path:
     return pigeon_root / "pigeonAssets" / "settings_0.8" / "settings_update_popup.svg"
 
 
-def update_popup_focus_ring(*, update_available: bool) -> tuple[str, ...]:
+def update_popup_focus_ring(
+    *,
+    update_available: bool,
+    checking: bool = False,
+    applying: bool = False,
+) -> tuple[str, ...]:
+    """Choices the encoder can land on. Empty while a check or apply is running."""
+    if checking or applying:
+        return ()
     return _UPDATE_FOCUS_AVAILABLE if update_available else _UPDATE_FOCUS_CURRENT
 
 
@@ -272,6 +280,26 @@ def _layout_available(root: ET.Element, state: MainSettingsState) -> None:
     _set_text_content(_find_by_logical_id(root, ID_CHANGES_GROUP), notes)
 
 
+def _layout_checking(root: ET.Element, state: MainSettingsState) -> None:
+    """Version + status copy only — no OK/LATER/NOW while GitHub is queried."""
+    current = _format_version(state.update_local_version or state.version_string)
+    _set_visible(_find_by_logical_id(root, ID_UPDATE_LABEL_GROUP), False)
+    _set_visible(_find_by_logical_id(root, ID_UPDATE_LABEL), False)
+    _set_visible(_find_by_logical_id(root, ID_ARROW), False)
+    _set_visible(_find_by_logical_id(root, ID_NEW_TEXT), False)
+    _set_visible(_find_by_logical_id(root, ID_LATER_GROUP), False)
+    _set_visible(_find_by_logical_id(root, ID_NOW_GROUP), False)
+    vx, _vy, vw, _vh = _VERSION_BAND
+    _set_text_translate(
+        _find_by_logical_id(root, ID_CURRENT_TEXT),
+        x=vx + vw / 2.0,
+        y=_CURRENT_ORIGIN_Y,
+    )
+    _set_text_content(_find_by_logical_id(root, ID_CURRENT_TEXT), current)
+    notes = (state.update_changelog or "").strip() or "Checking GitHub for updates…"
+    _set_text_content(_find_by_logical_id(root, ID_CHANGES_GROUP), notes)
+
+
 def _layout_up_to_date(root: ET.Element, state: MainSettingsState) -> None:
     current = _format_version(state.update_local_version or state.version_string)
     _set_visible(_find_by_logical_id(root, ID_UPDATE_LABEL_GROUP), False)
@@ -413,15 +441,9 @@ def apply_update_popup_svg_state(root: ET.Element, state: MainSettingsState) -> 
         _layout_applying(root, state)
         return
     if state.update_checking:
-        # Always show the in-progress check UI (never stale LATER/NOW from cache).
-        _layout_up_to_date(root, state)
-        _set_text_content(
-            _find_by_logical_id(root, ID_CHANGES_GROUP),
-            (state.update_changelog or "").strip() or "Checking GitHub for updates…",
-        )
-        later_enabled = False
-        focused = "now"
-    elif state.update_error and not available:
+        _layout_checking(root, state)
+        return
+    if state.update_error and not available:
         _layout_up_to_date(root, state)
         err = str(state.update_error).strip()
         _set_text_content(

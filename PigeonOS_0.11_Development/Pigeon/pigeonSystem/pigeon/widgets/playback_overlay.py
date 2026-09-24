@@ -30,20 +30,9 @@ _PLAYBACK_SETTING_TEXT_RGBA = (235, 238, 244, 210)
 PATCH_LAYER_WORDMARK = "wordmark"  # legacy layer id; wordmark blit removed
 PATCH_LAYER_STREAMING_BADGE = "streaming_badge"
 PATCH_LAYER_RECEIVER_AUDIO = "receiver_audio"
-PATCH_LAYER_PAUSED_ROW = "paused_row"
 
 # Receiver-driven playback line + volume stack: nudge down in design pixels.
 _RECEIVER_AUDIO_STACK_NUDGE_Y_PX = 5
-
-# Row 8.0 (aligned with TRT pill row); 17 cells wide cols 2–18, centered text.
-_PAUSED_ROW_TEXT = "paused"
-_PAUSED_ROW_SPAN_W = 17
-_PAUSED_ROW_SPAN_H = 1
-_PAUSED_ROW_GRID_ROW = 8.0
-_PAUSED_ROW_GRID_COL = 2
-# Nudge in design pixels (negative = toward top of canvas).
-_PAUSED_ROW_OFFSET_Y_PX = 0
-_PAUSED_ROW_RGBA = (238, 240, 245, 242)
 
 
 # Denon ``PS_*`` parameter-set fragments (``MULTEQ=AUDYSSEY``, etc.) — not input/config labels.
@@ -143,12 +132,14 @@ def volume_widget_format_label(
     incoming: str,
     config: str,
     receiver_name: str = "",
+    receiver_input: str = "",
 ) -> str:
-    """Caption above the volume disc: known audio format, else receiver name."""
-    line = receiver_audio_config_display_line(incoming, config)
-    if line:
-        return line
-    return str(receiver_name or "").strip()
+    """Caption above the volume disc: AVR input label, else known audio format."""
+    del receiver_name
+    inp = str(receiver_input or "").strip()
+    if inp:
+        return inp
+    return receiver_audio_config_display_line(incoming, config)
 
 
 def volume_widget_value_text(raw: object) -> str:
@@ -778,52 +769,7 @@ class AudioConfig:
 
         blits: list[DesignPatch] = []
 
-        if self.overlay_flags.get("show_paused_row"):
-            # Center ``paused`` inside the **visible** bar pill (opaque bounds), not the asset bbox.
-            from pigeon.widgets.status_bar import (
-                design_now_playing_bar_opaque_rect,
-                design_now_playing_bar_rect,
-            )
-
-            br = design_now_playing_bar_opaque_rect(self.assets_dir)
-            if br is None:
-                br = design_now_playing_bar_rect(self.assets_dir)
-            if br is not None:
-                bx, by, bw, bh = br
-                # Insets keep “paused” fully inside the **opaque** bar pill (italic + antialias).
-                pad_x = max(3, int(round(bw * 0.07)))
-                pad_y = max(3, int(round(bh * 0.18)))
-                pw = max(8, bw - 2 * pad_x)
-                ph = max(8, bh - 2 * pad_y)
-                px = bx + max(0, (bw - pw) // 2)
-                py = by + max(0, (bh - ph) // 2)
-            else:
-                px, py, pw, ph = rect_for_span_at_cell(
-                    _PAUSED_ROW_SPAN_W,
-                    _PAUSED_ROW_SPAN_H,
-                    row_1based=_PAUSED_ROW_GRID_ROW,
-                    col_1based=_PAUSED_ROW_GRID_COL,
-                )
-                py = max(0, py + _PAUSED_ROW_OFFSET_Y_PX)
-            _paused_pad = max(4, int(round(min(pw, ph) * 0.09)))
-            blits.append(
-                DesignPatch(
-                    x=px,
-                    y=py,
-                    w=pw,
-                    h=ph,
-                    bgra=_text_patch_bgra(
-                        _PAUSED_ROW_TEXT,
-                        pw,
-                        ph,
-                        align="center",
-                        fill_rgba=_PAUSED_ROW_RGBA,
-                        fit_max_h=max(6, int(round(0.94 * float(ph)))),
-                        edge_pad_px=int(_paused_pad),
-                    ),
-                    layer=PATCH_LAYER_PAUSED_ROW,
-                )
-            )
+        # “paused” is the zone-4 pausesaver plate, not the zone-5 status bar.
 
         bw, bh = self.badge_span
         bx, by, bww, bhh = rect_for_span_top_right_at_cell(

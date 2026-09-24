@@ -50,6 +50,116 @@ class PlayerMetadataTests(unittest.TestCase):
             dc.content_should_stay_active(md, hdmi_on=True, hdmi_present=False)
         )
 
+    def test_idle_poll_holds_last_title(self) -> None:
+        prev = {
+            "query": "IT: Welcome to Derry",
+            "title": "IT: Welcome to Derry",
+            "identity_source": "pyatv",
+            "identity_confidence": dc.PYATV_IDENTITY,
+            "content_key": "derry",
+            "device_state": "Playing",
+            "app_name": "Max",
+        }
+        incoming = {
+            "query": "",
+            "title": "",
+            "device_state": "Idle",
+            "app_name": "Max",
+            "power_state": "PowerState.On",
+        }
+        held = dc.hold_identity_across_idle_poll(prev, incoming)
+        self.assertEqual(held["query"], "IT: Welcome to Derry")
+        self.assertEqual(held["device_state"], "Idle")
+        self.assertTrue(held.get("identity_held_across_idle"))
+        self.assertTrue(dc.metadata_has_holdable_identity(held))
+        self.assertFalse(dc.metadata_is_playback_idle(held))
+        self.assertFalse(dc.playback_has_concluded(held))
+
+    def test_idle_at_end_of_title_is_concluded(self) -> None:
+        md = {
+            "query": "The Big Bang Theory",
+            "title": "The Infestation Hypothesis",
+            "device_state": "DeviceState.Idle",
+            "position": 1260.0,
+            "total_time": 1260.0,
+        }
+        self.assertTrue(dc.playback_has_concluded(md))
+        self.assertFalse(
+            dc.playback_has_concluded(
+                {
+                    "query": "The Big Bang Theory",
+                    "device_state": "DeviceState.Idle",
+                    "position": 600.0,
+                    "total_time": 1260.0,
+                }
+            )
+        )
+        self.assertFalse(
+            dc.playback_has_concluded(
+                {
+                    "query": "The Big Bang Theory",
+                    "device_state": "Playing",
+                    "position": 1260.0,
+                    "total_time": 1260.0,
+                }
+            )
+        )
+
+    def test_idle_poll_keeps_end_position_when_playhead_resets(self) -> None:
+        prev = {
+            "query": "The Big Bang Theory",
+            "title": "The Infestation Hypothesis",
+            "device_state": "Playing",
+            "position": 1259.0,
+            "total_time": 1260.0,
+        }
+        incoming = {
+            "query": "",
+            "title": "",
+            "device_state": "Idle",
+            "position": 0.0,
+            "total_time": 1260.0,
+            "power_state": "PowerState.On",
+        }
+        held = dc.hold_identity_across_idle_poll(prev, incoming)
+        self.assertTrue(held.get("playback_concluded"))
+        self.assertGreaterEqual(float(held.get("position") or 0.0), 1259.0)
+        self.assertTrue(dc.playback_has_concluded(held))
+
+    def test_idle_poll_keeps_paused_device_state(self) -> None:
+        prev = {
+            "query": "Shake It Off",
+            "title": "Shake It Off",
+            "device_state": "DeviceState.Paused",
+        }
+        incoming = {
+            "query": "",
+            "title": "",
+            "device_state": "DeviceState.Idle",
+            "power_state": "PowerState.On",
+        }
+        held = dc.hold_identity_across_idle_poll(prev, incoming)
+        self.assertEqual(held["title"], "Shake It Off")
+        self.assertIn("Paused", str(held.get("device_state") or ""))
+
+    def test_new_title_and_power_off_do_not_hold(self) -> None:
+        prev = {
+            "query": "IT: Welcome to Derry",
+            "title": "IT: Welcome to Derry",
+            "identity_source": "pyatv",
+        }
+        nxt = dc.hold_identity_across_idle_poll(
+            prev,
+            {"query": "Dune", "title": "Dune", "identity_source": "pyatv"},
+        )
+        self.assertEqual(nxt["query"], "Dune")
+        self.assertFalse(nxt.get("identity_held_across_idle"))
+        off = dc.hold_identity_across_idle_poll(
+            prev,
+            {"query": "", "title": "", "device_state": "Idle", "power_state": "Off"},
+        )
+        self.assertFalse(dc.metadata_has_holdable_identity(off))
+
     def test_short_movie_titles_are_adequate(self) -> None:
         for title in ("It", "Up", "Us", "Her", "Elf", "Ted", "It 2017"):
             md = {"query": title, "identity_source": "pyatv"}
@@ -75,6 +185,17 @@ class ShortTitleQueryTests(unittest.TestCase):
     def test_chapter_two_still_passes(self) -> None:
         self.assertFalse(is_degenerate_tmdb_query("It: Chapter Two"))
         self.assertFalse(looks_like_ocr_junk("It: Chapter Two"))
+
+    def test_welcome_to_derry_is_a_real_title(self) -> None:
+        title = "IT: Welcome to Derry"
+        self.assertFalse(is_degenerate_tmdb_query(title))
+        self.assertFalse(looks_like_ocr_junk(title))
+        self.assertFalse(dc.is_placeholder_identity(title))
+        self.assertTrue(
+            dc.player_metadata_adequate(
+                {"query": title, "identity_source": "pyatv"}
+            )
+        )
 
 
 class OcrScheduleTests(unittest.TestCase):
@@ -202,6 +323,72 @@ class OcrIdentityHandoffTests(unittest.TestCase):
         self.assertEqual(md["query"], "Ted Lasso")
 
 
+class TrtConfidenceTests(unittest.TestCase):
+    def test_parse_duration_treats_huge_values_as_milliseconds(self) -> None:
+        self.assertEqual(dc.parse_duration_seconds(192 * 60), 192 * 60)
+        self.assertAlmostEqual(dc.parse_duration_seconds(192 * 60 * 1000), 192 * 60)
+        self.assertIsNone(dc.parse_duration_seconds(0))
+        self.assertIsNone(dc.parse_duration_seconds(None))
+
+    def test_player_duration_uses_total_time_then_fallbacks(self) -> None:
+        self.assertEqual(
+            dc.player_duration_seconds({"total_time": 5400}),
+            5400,
+        )
+        self.assertEqual(
+            dc.player_duration_seconds({}, fallbacks=(None, 96 * 60)),
+            96 * 60,
+        )
+
+    def test_similarity_and_reject_thresholds(self) -> None:
+        self.assertAlmostEqual(dc.trt_similarity(192 * 60, 192 * 60), 1.0)
+        parody = dc.trt_confidence(192 * 60, 4 * 60)
+        mini = dc.trt_confidence(192 * 60, [96 * 60, 192 * 60])
+        self.assertIsNotNone(parody)
+        self.assertIsNotNone(mini)
+        self.assertLess(parody, dc.TRT_REJECT)
+        self.assertTrue(dc.trt_is_reject(192 * 60, 4 * 60))
+        self.assertTrue(dc.trt_is_reject(192 * 60, 135 * 60))
+        self.assertTrue(dc.trt_is_reject(190 * 60, 105 * 60))
+        self.assertFalse(dc.trt_is_reject(190 * 60, [105 * 60, 210 * 60]))
+        self.assertFalse(dc.trt_is_reject(192 * 60, [96 * 60, 192 * 60]))
+        self.assertGreaterEqual(mini, dc.TRT_AGREE)
+
+    def test_no_duration_skips_trt(self) -> None:
+        self.assertIsNone(dc.trt_confidence(None, 135 * 60))
+        scores = dc.scores_for_metadata(
+            {"query": "It", "identity_source": "pyatv"},
+            tmdb_matches=True,
+        )
+        self.assertIsNone(scores["trt"])
+        self.assertEqual(scores["art"], dc.ART_MATCHED)
+
+    def test_art_confidence_drops_on_trt_mismatch(self) -> None:
+        scores = dc.scores_for_metadata(
+            {"query": "It", "identity_source": "pyatv", "total_time": 192 * 60},
+            tmdb_matches=True,
+            tmdb_runtime_s=4 * 60,
+        )
+        self.assertLess(scores["trt"], dc.TRT_REJECT)
+        self.assertLess(scores["art"], 0.30)
+        long_parody = dc.scores_for_metadata(
+            {"query": "It", "identity_source": "pyatv", "total_time": 190 * 60},
+            tmdb_matches=True,
+            tmdb_runtime_s=105 * 60,
+        )
+        self.assertTrue(dc.trt_is_reject(190 * 60, 105 * 60))
+        self.assertLess(long_parody["art"], 0.30)
+
+    def test_art_confidence_rises_when_trt_agrees(self) -> None:
+        scores = dc.scores_for_metadata(
+            {"query": "It", "identity_source": "pyatv", "total_time": 192 * 60},
+            tmdb_matches=True,
+            tmdb_runtime_s=[96 * 60, 192 * 60],
+        )
+        self.assertGreaterEqual(scores["trt"], dc.TRT_AGREE)
+        self.assertGreaterEqual(scores["art"], dc.ART_MATCHED)
+
+
 class ZoneAdaptTests(unittest.TestCase):
     def test_no_position_uses_extra_cast_in_zone5(self) -> None:
         zones = _effective_zone_widgets(
@@ -294,6 +481,22 @@ class ZoneAdaptTests(unittest.TestCase):
             poster_16x9=True,
         )
         self.assertEqual(zones, ("", "", "volume", "", "status_bar"))
+
+    def test_16x9_does_not_eat_pausesaver_or_clocksaver(self) -> None:
+        paused = _effective_zone_widgets(
+            has_position=True,
+            cast_count=0,
+            zone_widgets=("", "", "", "pausesaver", "status_bar"),
+            poster_16x9=True,
+        )
+        self.assertEqual(paused[3], "pausesaver")
+        clock = _effective_zone_widgets(
+            has_position=False,
+            cast_count=0,
+            zone_widgets=("", "", "", "", "clock_saver_seconds"),
+            poster_16x9=True,
+        )
+        self.assertEqual(clock[4], "clock_saver_seconds")
 
 
 if __name__ == "__main__":

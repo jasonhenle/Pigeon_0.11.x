@@ -40,6 +40,17 @@ class AppleTvPowerOffTests(unittest.TestCase):
             )
         )
 
+    def test_known_title_is_not_off_after_scan_flakes(self) -> None:
+        md = {
+            "query": "IT: Welcome to Derry",
+            "title": "IT: Welcome to Derry",
+            "identity_source": "pyatv",
+            "device_state": "Idle",
+        }
+        self.assertFalse(
+            apple_tv_should_show_idle_clock(md, consecutive_fail=ATV_OFF_POLL_FAILS + 4)
+        )
+
     def test_attach_reads_pyatv_power_property(self) -> None:
         md: dict[str, object] = {}
         atv = SimpleNamespace(power=SimpleNamespace(power_state="PowerState.Off"))

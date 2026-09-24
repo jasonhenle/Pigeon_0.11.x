@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Create side-by-side git worktrees + Desktop double-click launchers:
-#   Pigeon (experiment).command  -> ~/Desktop/Pigeon  (PigeonOS_0.10 branch)
-#   Pigeon (0.10).command        -> same as experiment
+#   Pigeon (experiment).command  -> ~/Desktop/Pigeon  (PigeonOS_0.11 branch)
+#   Pigeon (0.11).command        -> same as experiment
 #   Pigeon (main).command        -> ~/Desktop/Pigeon-main (main branch)
 #
 # Run once (or again after moving the repo):
@@ -15,14 +15,14 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
   exit 1
 }
 
-DEV_BRANCH="PigeonOS_0.10"
+DEV_BRANCH="PigeonOS_0.11"
 DEV_ROOT="${DESKTOP}/Pigeon"
 MAIN_ROOT="${DESKTOP}/Pigeon-main"
 DEV_APP="${DEV_ROOT}/PigeonOS_0.11_Development/Pigeon"
 MAIN_APP="${MAIN_ROOT}/PigeonOS_0.11_Development/Pigeon"
 LAUNCHER_EXPERIMENT="${DESKTOP}/Pigeon (experiment).command"
 LAUNCHER_MAIN="${DESKTOP}/Pigeon (main).command"
-LAUNCHER_ALIAS="${DESKTOP}/Pigeon (0.10).command"
+LAUNCHER_ALIAS="${DESKTOP}/Pigeon (0.11).command"
 
 echo "==> Pigeon desktop launchers"
 echo "    repo:   ${REPO_ROOT}"
@@ -66,7 +66,7 @@ APP="${app}"
 BRANCH="${branch}"
 LAUNCHER="${label}"
 
-if [[ ! -f "\${APP}/installer/run_pigeon_0_10.command" ]]; then
+if [[ ! -f "\${APP}/installer/run_pigeon_0_11.command" ]]; then
   osascript -e "display alert \"Pigeon not found\" message \"Expected install at:\${APP}\" as critical"
   exit 1
 fi
@@ -87,20 +87,20 @@ echo "  branch \${BRANCH}  ·  v\${VERSION}"
 echo "  \${APP}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-exec bash "\${APP}/installer/run_pigeon_0_10.command"
+exec bash "\${APP}/installer/run_pigeon_0_11.command"
 EOF
   chmod +x "${path}"
   echo "==> Wrote ${path}"
 }
 
-write_launcher "${LAUNCHER_EXPERIMENT}" "PigeonOS_0.10 (dev)" "${DEV_ROOT}" "${DEV_APP}" "${DEV_BRANCH}"
+write_launcher "${LAUNCHER_EXPERIMENT}" "PigeonOS_0.11 (dev)" "${DEV_ROOT}" "${DEV_APP}" "${DEV_BRANCH}"
 write_launcher "${LAUNCHER_MAIN}" "main (release)" "${MAIN_ROOT}" "${MAIN_APP}" "main"
-write_launcher "${LAUNCHER_ALIAS}" "PigeonOS_0.10 (dev)" "${DEV_ROOT}" "${DEV_APP}" "${DEV_BRANCH}"
+write_launcher "${LAUNCHER_ALIAS}" "PigeonOS_0.11 (dev)" "${DEV_ROOT}" "${DEV_APP}" "${DEV_BRANCH}"
 
 echo
 echo "Done. Double-click on your Desktop:"
-echo "  • Pigeon (experiment).command  — ${DEV_BRANCH} / PigeonOS 0.10"
-echo "  • Pigeon (0.10).command        — same as experiment (explicit 0.10 name)"
+echo "  • Pigeon (experiment).command  — ${DEV_BRANCH} / PigeonOS 0.11"
+echo "  • Pigeon (0.11).command        — same as experiment (explicit 0.11 name)"
 echo "  • Pigeon (main).command        — same code the Updates button ships"
 echo
 echo "Re-run this script anytime to refresh the main worktree or recreate launchers."

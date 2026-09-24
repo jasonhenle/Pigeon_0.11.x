@@ -209,6 +209,17 @@ def _parse_denon_response_lines(lines: Iterable[str]) -> dict[str, str]:
                 val = rest[len("INFAISSIG") :].strip()
                 if val:
                     out["SSINFAISSIG"] = val
+            elif up.startswith("FUN"):
+                val = rest[3:].strip()
+                if val:
+                    func, _, rename = val.partition(" ")
+                    func = func.strip()
+                    pretty = rename.strip()
+                    if func:
+                        out["SSFUN_FUNC"] = func
+                        if pretty:
+                            out[f"SSFUN_{func}"] = pretty
+                            out["SSFUN"] = pretty
             elif rest and "SS" not in out:
                 out["SS"] = rest
             continue
@@ -558,9 +569,10 @@ def _poll_denon_telnet_locked(
             initial_blob = _recv_until_idle(
                 sock, idle_s=0.12, total_deadline=initial_deadline
             )
+            extra_cmds: tuple[str, ...] = ("SSFUN ?",)
 
             # Send our command battery. Each command is CR-terminated.
-            for cmd in _POLL_COMMANDS:
+            for cmd in _POLL_COMMANDS + extra_cmds:
                 if time.monotonic() >= deadline:
                     break
                 payload = (cmd + "\r").encode("ascii", errors="ignore")
@@ -703,12 +715,13 @@ class _DenonTelnetHub:
             sock.setblocking(False)
             last_ping = 0.0
             leftover = b""
+            last_si = 0.0
             banner = _recv_until_idle(
                 sock, idle_s=0.08, total_deadline=time.monotonic() + 0.4
             )
             self._ingest(banner)
             try:
-                sock.sendall(b"PW?\rMV?\rMU?\r")
+                sock.sendall(b"PW?\rMV?\rMU?\rSI?\r")
             except OSError:
                 return
             while not self._stop.is_set() and not self._suspend.is_set():
@@ -719,6 +732,12 @@ class _DenonTelnetHub:
                     except OSError:
                         return
                     last_ping = now
+                if now - last_si >= 8.0:
+                    try:
+                        sock.sendall(b"SI?\rSSFUN ?\r")
+                    except OSError:
+                        return
+                    last_si = now
                 r, _, _ = select.select([sock], [], [], 0.2)
                 if not r:
                     continue

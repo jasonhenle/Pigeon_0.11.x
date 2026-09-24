@@ -17,6 +17,10 @@ APP_REL="PigeonOS_0.11_Development/Pigeon"
 INSTALL_DIR="${1:-}"
 if [[ -z "${INSTALL_DIR}" ]]; then
   for d in "${HOME}"/Pigeon_*; do
+    if [[ -f "${d}/installer/run_pigeon_0_11.sh" && -f "${d}/pigeonSystem/pigeon_0_9.py" ]]; then
+      INSTALL_DIR="${d}"
+      break
+    fi
     if [[ -f "${d}/installer/run_pigeon_0_10.sh" && -f "${d}/pigeonSystem/pigeon_0_9.py" ]]; then
       INSTALL_DIR="${d}"
       break
@@ -113,7 +117,7 @@ if [[ -d "${SRC}/pigeonAssets" ]]; then
   rsync -a "${SRC}/pigeonAssets/" "${INSTALL_DIR}/pigeonAssets/"
 fi
 
-# Belt and braces: systemd execs run_pigeon_0_10.sh directly, so a stripped +x
+# Belt and braces: systemd execs run_pigeon_0_11.sh directly, so a stripped +x
 # leaves the service in a 203/EXEC restart loop.
 if [[ -d "${INSTALL_DIR}/installer" ]]; then
   chmod +x "${INSTALL_DIR}/installer/"*.sh 2>/dev/null || true
@@ -126,7 +130,7 @@ source "${INSTALL_DIR}/installer/common.sh"
 pigeon_install_bundled_fonts "${INSTALL_DIR}" "${HOME}"
 
 echo "==> Refreshing Python dependencies…"
-bash "${INSTALL_DIR}/installer/run_pigeon_0_10.sh" --bootstrap-only
+bash "${INSTALL_DIR}/installer/run_pigeon_0_11.sh" --bootstrap-only
 
 VER="$(python3 -c "import importlib.util; p='${INSTALL_DIR}/pigeonSystem/pigeon/version.py'; s=importlib.util.spec_from_file_location('pv', p); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(m.version_string())")"
 echo ""

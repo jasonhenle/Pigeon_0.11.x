@@ -1,4 +1,4 @@
-# PigeonOS 0.10
+# PigeonOS 0.11
 
 This folder is the runnable/shareable build for Pigeon (see `pigeonSystem/pigeon/version.py` for the current semver).
 
@@ -9,8 +9,8 @@ Pigeon is a full-screen media display and control surface. It can show playback 
 ## Core folder map
 
 - `installer/`: install and launch scripts for this build.
-  - `installer/run_pigeon_0_10.command`: macOS launch script.
-  - `installer/run_pigeon_0_10.sh`: Linux / Pi launch script.
+  - `installer/run_pigeon_0_11.command`: macOS launch script.
+  - `installer/run_pigeon_0_11.sh`: Linux / Pi launch script.
 - `pigeonSystem/`: all runnable code and system modules for this build.
   - main app entrypoint: `pigeonSystem/pigeon_0_9.py`
   - package code: `pigeonSystem/pigeon/`
@@ -87,5 +87,5 @@ Run once to create/update:
 ```
 
 This adds on your Desktop:
-- **`Pigeon (experiment).command`** / **`Pigeon (0.10).command`** → this tree (`PigeonOS_0.10`)
+- **`Pigeon (experiment).command`** / **`Pigeon (0.11).command`** → this tree (`PigeonOS_0.11`)
 - **`Pigeon (main).command`** → `~/Desktop/Pigeon-main` (release worktree)

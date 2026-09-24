@@ -123,7 +123,7 @@ install_pi_linux() {
       echo "${app}"
       return
     fi
-    echo "==> Latest release tarball is not a 0.10 package — falling back to main-branch zip." >&2
+    echo "==> Latest release tarball is not a 0.11 package — falling back to main-branch zip." >&2
   fi
 
   echo "==> Using main-branch zip (full repo snapshot)." >&2

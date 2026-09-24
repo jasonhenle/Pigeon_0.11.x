@@ -85,6 +85,28 @@ _VOLUME_GPIO_A = 23
 _VOLUME_GPIO_B = 24
 _VOLUME_GPIO_BUTTON = 25
 _PLAY_PAUSE_GPIO_BUTTON = 26
+# Gray-code steps: +1 clockwise, -1 counter-clockwise.
+_QUAD_STEP = {
+    0b0001: 1,
+    0b0111: 1,
+    0b1110: 1,
+    0b1000: 1,
+    0b0010: -1,
+    0b1011: -1,
+    0b1101: -1,
+    0b0100: -1,
+}
+# gpiozero RotaryEncoder.TRANSITIONS — one event after a full detent, not each edge.
+# Index is edge (A<<1)|B. See gpiozero input_devices.RotaryEncoder.
+_ENCODER_TRANSITIONS: dict[str, tuple[str, str, str, str]] = {
+    "idle": ("idle", "ccw1", "cw1", "idle"),
+    "ccw1": ("idle", "ccw1", "ccw3", "ccw2"),
+    "ccw2": ("idle", "ccw1", "ccw3", "ccw2"),
+    "ccw3": ("-1", "idle", "ccw3", "ccw2"),
+    "cw1": ("idle", "cw3", "cw1", "cw2"),
+    "cw2": ("idle", "cw3", "cw1", "cw2"),
+    "cw3": ("+1", "cw3", "idle", "cw2"),
+}
 _VOLUME_LINE_TO_ACTION = {
     "VOL_UP": "volume_up",
     "VOLUME_UP": "volume_up",
@@ -519,7 +541,11 @@ def _reap_stale_gpio_helpers() -> int:
             continue
         if mark not in raw and b"from gpiozero import" not in raw:
             continue
-        if b"RotaryEncoder(" not in raw and b"PLAY_PAUSE" not in raw:
+        if (
+            b"RotaryEncoder(" not in raw
+            and b"PLAY_PAUSE" not in raw
+            and b"DigitalInputDevice" not in raw
+        ):
             continue
         victims.append(pid)
     killed = 0
@@ -541,6 +567,99 @@ def _reap_stale_gpio_helpers() -> int:
     return killed
 
 
+def quadrature_step(prev: int, cur: int) -> int:
+    """Return +1 / −1 for a valid A/B gray-code step, else 0."""
+    return int(_QUAD_STEP.get(((int(prev) & 3) << 2) | (int(cur) & 3), 0))
+
+
+def quadrature_detent(state: str, edge: int) -> tuple[str, int]:
+    """Advance the gpiozero detent machine.
+
+    *edge* is ``(A << 1) | B``. Returns ``(new_state, detent)`` where detent is
+    ``+1`` clockwise, ``-1`` counter-clockwise, or ``0`` for an in-between edge.
+    """
+    nxt = _ENCODER_TRANSITIONS[state][int(edge) & 3]
+    if nxt == "+1":
+        return "idle", 1
+    if nxt == "-1":
+        return "idle", -1
+    return str(nxt), 0
+
+
+def _gpio_poll_encoder_script(
+    pin_a: int,
+    pin_b: int,
+    pin_button: int,
+    *,
+    cw: str,
+    ccw: str,
+    push: str,
+) -> str:
+    """Poll A/B/button. gpiozero edge callbacks go deaf after long kiosk runs.
+
+    Emit one CW/CCW line per detent (gpiozero RotaryEncoder), not per gray edge.
+    """
+    return f"""
+import time
+from gpiozero import DigitalInputDevice
+
+a = DigitalInputDevice({int(pin_a)}, pull_up=True)
+b = DigitalInputDevice({int(pin_b)}, pull_up=True)
+btn = DigitalInputDevice({int(pin_button)}, pull_up=True)
+TRANS = {_ENCODER_TRANSITIONS!r}
+state = 'idle'
+prev = (int(a.value) << 1) | int(b.value)
+prev_btn = int(btn.value)
+last_btn = 0.0
+while True:
+    try:
+        cur = (int(a.value) << 1) | int(b.value)
+        if cur != prev:
+            prev = cur
+            nxt = TRANS[state][cur]
+            if nxt == '+1':
+                print({cw!r}, flush=True)
+                state = 'idle'
+            elif nxt == '-1':
+                print({ccw!r}, flush=True)
+                state = 'idle'
+            else:
+                state = nxt
+        bv = int(btn.value)
+        now = time.monotonic()
+        if bv != prev_btn:
+            if prev_btn == 1 and bv == 0 and (now - last_btn) >= 0.05:
+                print({push!r}, flush=True)
+                last_btn = now
+            prev_btn = bv
+    except Exception:
+        pass
+    time.sleep(0.001)
+"""
+
+
+def _gpio_poll_button_script(pin_button: int, *, line: str) -> str:
+    return f"""
+import time
+from gpiozero import DigitalInputDevice
+
+btn = DigitalInputDevice({int(pin_button)}, pull_up=True)
+prev = int(btn.value)
+last = 0.0
+while True:
+    try:
+        bv = int(btn.value)
+        now = time.monotonic()
+        if prev == 1 and bv == 0 and (now - last) >= 0.08:
+            print({line!r}, flush=True)
+            last = now
+        prev = bv
+    except Exception:
+        pass
+    time.sleep(0.002)
+"""
+
+
 def _spawn_gpio_helper(script: str) -> subprocess.Popen[str] | None:
     body = _GPIO_HELPER_PREAMBLE + script
     try:
@@ -554,6 +673,81 @@ def _spawn_gpio_helper(script: str) -> subprocess.Popen[str] | None:
     except Exception as exc:
         _stderr(f"pigeon: rotary_gpio: helper spawn failed: {exc}")
         return None
+
+
+def _pump_gpio_helper(
+    *,
+    script: str,
+    label: str,
+    on_line: Callable[[str], None],
+    stop: threading.Event,
+) -> Callable[[], None]:
+    """Read helper stdout until stopped; respawn if gpiozero / lgpio drops out."""
+    holder: list[subprocess.Popen[str] | None] = [None]
+
+    def stderr_worker(proc: subprocess.Popen[str]) -> None:
+        stream = proc.stderr
+        if stream is None:
+            return
+        for raw in stream:
+            msg = raw.strip()
+            if msg:
+                _stderr(f"pigeon: {label}: {msg}")
+
+    def worker() -> None:
+        while not stop.is_set():
+            proc = _spawn_gpio_helper(script)
+            if proc is None:
+                if stop.wait(1.5):
+                    return
+                continue
+            holder[0] = proc
+            threading.Thread(
+                target=stderr_worker,
+                args=(proc,),
+                name=f"pigeon-{label}-stderr",
+                daemon=True,
+            ).start()
+            stream = proc.stdout
+            try:
+                while not stop.is_set() and stream is not None:
+                    try:
+                        line = stream.readline()
+                    except Exception as exc:
+                        _stderr(f"pigeon: {label}: read failed: {exc}")
+                        break
+                    if line:
+                        try:
+                            on_line(line.strip())
+                        except Exception as exc:
+                            _stderr(f"pigeon: {label}: dispatch failed: {exc}")
+                        continue
+                    if proc.poll() is not None:
+                        break
+                if proc.poll() is None:
+                    try:
+                        proc.terminate()
+                    except OSError:
+                        pass
+            finally:
+                holder[0] = None
+            if stop.is_set():
+                return
+            _stderr(f"pigeon: {label}: helper exited, restarting")
+            time.sleep(0.35)
+
+    threading.Thread(target=worker, name=f"pigeon-{label}", daemon=True).start()
+
+    def stop_helper() -> None:
+        stop.set()
+        proc = holder[0]
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+
+    return stop_helper
 
 
 def _start_gpio_listener(
@@ -571,71 +765,43 @@ def _start_gpio_listener(
     pin_button = _env_pin("PIGEON_ROTARY_GPIO_BUTTON", _GPIO_BUTTON)
     cw_line = "LEFT" if invert else "RIGHT"
     ccw_line = "RIGHT" if invert else "LEFT"
-    helper = f"""
-from gpiozero import Button, RotaryEncoder
-from signal import pause
+    helper = _gpio_poll_encoder_script(
+        pin_a, pin_b, pin_button, cw=cw_line, ccw=ccw_line, push="PUSH"
+    )
+    ignored = [0]
+    logged_ok = [0]
+    stop = threading.Event()
 
-encoder = RotaryEncoder({pin_a}, {pin_b}, max_steps=0)
-button = Button({pin_button}, pull_up=True, bounce_time=0.05)
-
-encoder.when_rotated_clockwise = lambda: print("{cw_line}", flush=True)
-encoder.when_rotated_counter_clockwise = lambda: print("{ccw_line}", flush=True)
-button.when_pressed = lambda: print("PUSH", flush=True)
-pause()
-"""
+    def on_line(line: str) -> None:
+        _handle_line(
+            root,
+            line,
+            on_action=on_action,
+            invert=False,
+            gate=gate,
+            logged_ok=logged_ok,
+            ignored=ignored,
+            source="gpio",
+        )
 
     try:
-        proc = _spawn_gpio_helper(helper)
-        if proc is None:
-            return None
+        stopper = _pump_gpio_helper(
+            script=helper,
+            label="rotary_gpio",
+            on_line=on_line,
+            stop=stop,
+        )
     except Exception as exc:
         _stderr(f"pigeon: rotary_gpio: not started: {exc}")
         return None
 
-    ignored = [0]
-    logged_ok = [0]
-
-    def stdout_worker() -> None:
-        stream = proc.stdout
-        if stream is None:
-            return
-        for line in stream:
-            if proc.poll() is not None and not line:
-                break
-            _handle_line(
-                root,
-                line.strip(),
-                on_action=on_action,
-                invert=False,
-                gate=gate,
-                logged_ok=logged_ok,
-                ignored=ignored,
-                source="gpio",
-            )
-
-    def stderr_worker() -> None:
-        stream = proc.stderr
-        if stream is None:
-            return
-        for line in stream:
-            msg = line.strip()
-            if msg:
-                _stderr(f"pigeon: rotary_gpio: {msg}")
-
-    threading.Thread(target=stdout_worker, name="pigeon-rotary-gpio", daemon=True).start()
-    threading.Thread(target=stderr_worker, name="pigeon-rotary-gpio-stderr", daemon=True).start()
     _stderr(
         "pigeon: rotary_gpio: listening "
         f"CW=Right CCW=Left PUSH=Activate "
         f"(A=GPIO{pin_a}, B=GPIO{pin_b}, button=GPIO{pin_button})"
-        + (" (gpio invert)" if invert else "")
+        + (" (gpio invert, poll)" if invert else " (poll)")
     )
-
-    def stop_gpio() -> None:
-        if proc.poll() is None:
-            proc.terminate()
-
-    return stop_gpio
+    return stopper
 
 
 def _start_volume_gpio_listener(
@@ -652,73 +818,47 @@ def _start_volume_gpio_listener(
     invert = _env_volume_gpio_invert()
     cw_line = "VOL_DOWN" if invert else "VOL_UP"
     ccw_line = "VOL_UP" if invert else "VOL_DOWN"
-    helper = f"""
-from gpiozero import Button, RotaryEncoder
-from signal import pause
+    helper = _gpio_poll_encoder_script(
+        pin_a, pin_b, pin_button, cw=cw_line, ccw=ccw_line, push="MUTE"
+    )
+    logged_ok = [0]
+    ignored = [0]
+    stop = threading.Event()
 
-encoder = RotaryEncoder({pin_a}, {pin_b}, max_steps=0)
-button = Button({pin_button}, pull_up=True, bounce_time=0.05)
-
-encoder.when_rotated_clockwise = lambda: print("{cw_line}", flush=True)
-encoder.when_rotated_counter_clockwise = lambda: print("{ccw_line}", flush=True)
-button.when_pressed = lambda: print("MUTE", flush=True)
-pause()
-"""
+    def on_line(line: str) -> None:
+        line_u = _normalize_line(line)
+        action = _VOLUME_LINE_TO_ACTION.get(line_u)
+        if action is None:
+            if ignored[0] < 8:
+                _stderr(f"pigeon: rotary_volume_gpio: ignore unknown line {line_u!r}")
+                ignored[0] += 1
+            return
+        if logged_ok[0] < 8:
+            _stderr(f"pigeon: rotary_volume_gpio: {line_u!r} → {action}")
+            logged_ok[0] += 1
+        try:
+            root.after(0, lambda act=action: on_volume_action(act))
+        except Exception as exc:
+            _stderr(f"pigeon: rotary_volume_gpio: dispatch {action} failed: {exc}")
 
     try:
-        proc = _spawn_gpio_helper(helper)
-        if proc is None:
-            return None
+        stopper = _pump_gpio_helper(
+            script=helper,
+            label="rotary_volume_gpio",
+            on_line=on_line,
+            stop=stop,
+        )
     except Exception as exc:
         _stderr(f"pigeon: rotary_volume_gpio: not started: {exc}")
         return None
 
-    logged_ok = [0]
-    ignored = [0]
-
-    def stdout_worker() -> None:
-        stream = proc.stdout
-        if stream is None:
-            return
-        for line in stream:
-            line_u = _normalize_line(line)
-            action = _VOLUME_LINE_TO_ACTION.get(line_u)
-            if action is None:
-                if ignored[0] < 8:
-                    _stderr(f"pigeon: rotary_volume_gpio: ignore unknown line {line_u!r}")
-                    ignored[0] += 1
-                continue
-            if logged_ok[0] < 8:
-                _stderr(f"pigeon: rotary_volume_gpio: {line_u!r} → {action}")
-                logged_ok[0] += 1
-            try:
-                root.after(0, lambda act=action: on_volume_action(act))
-            except Exception as exc:
-                _stderr(f"pigeon: rotary_volume_gpio: dispatch {action} failed: {exc}")
-
-    def stderr_worker() -> None:
-        stream = proc.stderr
-        if stream is None:
-            return
-        for line in stream:
-            msg = line.strip()
-            if msg:
-                _stderr(f"pigeon: rotary_volume_gpio: {msg}")
-
-    threading.Thread(target=stdout_worker, name="pigeon-volume-gpio", daemon=True).start()
-    threading.Thread(target=stderr_worker, name="pigeon-volume-gpio-stderr", daemon=True).start()
     _stderr(
         "pigeon: rotary_volume_gpio: listening "
         f"CW=VolumeUp CCW=VolumeDown PUSH=Mute "
         f"(A=GPIO{pin_a}, B=GPIO{pin_b}, button=GPIO{pin_button})"
-        + (" (gpio invert)" if invert else "")
+        + (" (gpio invert, poll)" if invert else " (poll)")
     )
-
-    def stop_gpio() -> None:
-        if proc.poll() is None:
-            proc.terminate()
-
-    return stop_gpio
+    return stopper
 
 
 def _start_play_pause_gpio_listener(
@@ -730,63 +870,39 @@ def _start_play_pause_gpio_listener(
         return None
 
     pin_button = _env_pin("PIGEON_PLAY_PAUSE_GPIO_BUTTON", _PLAY_PAUSE_GPIO_BUTTON)
-    helper = f"""
-from gpiozero import Button
-from signal import pause
+    helper = _gpio_poll_button_script(pin_button, line="PLAY_PAUSE")
+    logged_ok = [0]
+    ignored = [0]
+    stop = threading.Event()
 
-button = Button({pin_button}, pull_up=True, bounce_time=0.08)
-button.when_pressed = lambda: print("PLAY_PAUSE", flush=True)
-pause()
-"""
+    def on_line(line: str) -> None:
+        line_u = _normalize_line(line)
+        if line_u != "PLAY_PAUSE":
+            if ignored[0] < 8:
+                _stderr(f"pigeon: play_pause_gpio: ignore unknown line {line_u!r}")
+                ignored[0] += 1
+            return
+        if logged_ok[0] < 8:
+            _stderr("pigeon: play_pause_gpio: 'PLAY_PAUSE' → play_pause")
+            logged_ok[0] += 1
+        try:
+            root.after(0, on_play_pause_action)
+        except Exception as exc:
+            _stderr(f"pigeon: play_pause_gpio: dispatch failed: {exc}")
 
     try:
-        proc = _spawn_gpio_helper(helper)
-        if proc is None:
-            return None
+        stopper = _pump_gpio_helper(
+            script=helper,
+            label="play_pause_gpio",
+            on_line=on_line,
+            stop=stop,
+        )
     except Exception as exc:
         _stderr(f"pigeon: play_pause_gpio: not started: {exc}")
         return None
 
-    logged_ok = [0]
-    ignored = [0]
-
-    def stdout_worker() -> None:
-        stream = proc.stdout
-        if stream is None:
-            return
-        for line in stream:
-            line_u = _normalize_line(line)
-            if line_u != "PLAY_PAUSE":
-                if ignored[0] < 8:
-                    _stderr(f"pigeon: play_pause_gpio: ignore unknown line {line_u!r}")
-                    ignored[0] += 1
-                continue
-            if logged_ok[0] < 8:
-                _stderr("pigeon: play_pause_gpio: 'PLAY_PAUSE' → play_pause")
-                logged_ok[0] += 1
-            try:
-                root.after(0, on_play_pause_action)
-            except Exception as exc:
-                _stderr(f"pigeon: play_pause_gpio: dispatch failed: {exc}")
-
-    def stderr_worker() -> None:
-        stream = proc.stderr
-        if stream is None:
-            return
-        for line in stream:
-            msg = line.strip()
-            if msg:
-                _stderr(f"pigeon: play_pause_gpio: {msg}")
-
-    threading.Thread(target=stdout_worker, name="pigeon-play-pause-gpio", daemon=True).start()
-    threading.Thread(target=stderr_worker, name="pigeon-play-pause-gpio-stderr", daemon=True).start()
-    _stderr(f"pigeon: play_pause_gpio: listening PLAY/PAUSE (button=GPIO{pin_button})")
-
-    def stop_gpio() -> None:
-        if proc.poll() is None:
-            proc.terminate()
-
-    return stop_gpio
+    _stderr(f"pigeon: play_pause_gpio: listening PLAY/PAUSE (button=GPIO{pin_button}) (poll)")
+    return stopper
 
 
 def _handle_line(
@@ -828,8 +944,8 @@ def _handle_line(
                 received_at=ts,
             ),
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        _stderr(f"pigeon: rotary_serial: after() failed for {action} ({source}): {exc}")
 
 
 def _read_loop(

@@ -357,9 +357,18 @@ _MUSIC_TEXT_CACHE: "dict[tuple, Optional[np.ndarray]]" = {}
 _MUSIC_TEXT_CACHE_MAX = 16
 
 # Vertical layout tuning: fraction of total height the title takes when all
-# three lines are present. Artist + album share the remainder.
-_MUSIC_TITLE_FRAC_THREE = 0.60
-_MUSIC_TITLE_FRAC_TWO = 0.76
+# three lines are present. Artist + album share the remainder, with
+# comfortable gaps between song / artist / album.
+_MUSIC_TITLE_FRAC_THREE = 0.50
+_MUSIC_TITLE_FRAC_TWO = 0.56
+_MUSIC_TITLE_SUBTITLE_GAP_FRAC = 0.06
+_MUSIC_SUBTITLE_LINE_GAP_FRAC = 0.05
+_MUSIC_ANCHORED_TITLE_GAP_PX = 12
+_MUSIC_ANCHORED_LINE_GAP_FRAC = 0.09
+_MUSIC_VCENTER_TITLE_MAX_PX = 52
+_MUSIC_VCENTER_SMALL_MAX_PX = 26
+_MUSIC_VCENTER_TITLE_GAP_PX = 12
+_MUSIC_VCENTER_LINE_GAP_PX = 10
 
 
 def _ellipsize_to_width(
@@ -395,6 +404,7 @@ def render_ui_music_text_patch_bgra(
     box_h: int,
     *,
     subtitle_top_frac: Optional[float] = None,
+    vcenter: bool = False,
 ) -> Optional[np.ndarray]:
     """Render a Music-styled text patch inside ``(box_w, box_h)``.
 
@@ -411,8 +421,13 @@ def render_ui_music_text_patch_bgra(
     Use this when you need line 2 to land on a specific grid row (e.g. ``3.5``
     inside the 4-row TT rect on viewOne.audioContent => ``1.5/4 = 0.375``).
 
+    ``vcenter`` packs song / artist / album at a comfortable size and
+    vertically centers that group in the box (used between album art and
+    the status bar).
+
     Falls back to :func:`render_ui_text_patch_bgra` when only ``title`` is
-    present. Returns ``None`` when PIL is unavailable or all inputs are empty.
+    present (unless ``vcenter``). Returns ``None`` when PIL is unavailable
+    or all inputs are empty.
     """
     title = (title or "").strip()
     artist = (artist or "").strip()
@@ -421,7 +436,7 @@ def render_ui_music_text_patch_bgra(
         return None
     if box_w < 2 or box_h < 2 or not _PIL_OK:
         return None
-    if title and not artist and not album:
+    if title and not artist and not album and not vcenter:
         return render_ui_text_patch_bgra(title, box_w, box_h)
 
     # The font pair differs from the single-line renderer, so tag the cache
@@ -434,6 +449,7 @@ def render_ui_music_text_patch_bgra(
         int(box_w),
         int(box_h),
         float(subtitle_top_frac) if subtitle_top_frac is not None else -1.0,
+        1 if vcenter else 0,
         _ui_text_cache_tag(),
     )
     cached = _MUSIC_TEXT_CACHE.get(key)
@@ -452,15 +468,46 @@ def render_ui_music_text_patch_bgra(
         small_lines.append(album)
     n_small = len(small_lines)
 
-    gap_small = max(1, int(round(bh * 0.015)))
-
-    if subtitle_top_frac is not None and n_small > 0:
+    y_off = 0
+    if vcenter:
+        gap_between = int(_MUSIC_VCENTER_TITLE_GAP_PX) if (title and n_small) else 0
+        gap_small = int(_MUSIC_VCENTER_LINE_GAP_PX)
+        title_h = min(
+            int(_MUSIC_VCENTER_TITLE_MAX_PX),
+            max(12, int(round(bh * 0.36))),
+        )
+        per_small_h = (
+            min(
+                int(_MUSIC_VCENTER_SMALL_MAX_PX),
+                max(8, int(round(bh * 0.18))),
+            )
+            if n_small
+            else 0
+        )
+        packed = (
+            (title_h if title else 0)
+            + gap_between
+            + n_small * per_small_h
+            + max(0, n_small - 1) * gap_small
+        )
+        if packed > bh:
+            title_h = max(12, title_h - (packed - bh))
+            packed = (
+                (title_h if title else 0)
+                + gap_between
+                + n_small * per_small_h
+                + max(0, n_small - 1) * gap_small
+            )
+        y_off = max(0, (bh - packed) // 2)
+        remaining = n_small * per_small_h + max(0, n_small - 1) * gap_small
+    elif subtitle_top_frac is not None and n_small > 0:
         # Explicit vertical anchor: title region ends at the subtitle top; the
         # subtitle region spans from there to the bottom of the box.
         sub_top = max(0, min(bh - 1, int(round(bh * float(subtitle_top_frac)))))
         title_h = max(12, sub_top)
         remaining = bh - sub_top
         gap_between = 0
+        gap_small = max(10, int(round(bh * _MUSIC_ANCHORED_LINE_GAP_FRAC)))
     else:
         if n_small == 2:
             title_frac = _MUSIC_TITLE_FRAC_THREE
@@ -468,16 +515,18 @@ def render_ui_music_text_patch_bgra(
             title_frac = _MUSIC_TITLE_FRAC_TWO
         else:
             title_frac = 0.92
-        gap_between = max(2, int(round(bh * 0.03)))
+        gap_between = max(8, int(round(bh * _MUSIC_TITLE_SUBTITLE_GAP_FRAC)))
+        gap_small = max(6, int(round(bh * _MUSIC_SUBTITLE_LINE_GAP_FRAC)))
         title_h = max(12, int(round(bh * title_frac)))
         remaining = bh - title_h - (gap_between if n_small > 0 else 0)
 
-    if n_small == 2:
-        per_small_h = max(8, (remaining - gap_small) // 2)
-    elif n_small == 1:
-        per_small_h = max(8, remaining)
-    else:
-        per_small_h = 0
+    if not vcenter:
+        if n_small == 2:
+            per_small_h = max(8, (remaining - gap_small) // 2)
+        elif n_small == 1:
+            per_small_h = max(8, remaining)
+        else:
+            per_small_h = 0
 
     img = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -488,14 +537,14 @@ def render_ui_music_text_patch_bgra(
         if t_font is not None:
             tw, th, bbox = _measure(t_font, title)
             ox = (bw - tw) // 2 - int(bbox[0])
-            if subtitle_top_frac is not None:
+            if subtitle_top_frac is not None and not vcenter:
                 # Sit just above line 2 instead of floating in the title region.
-                pack = 4
+                pack = int(_MUSIC_ANCHORED_TITLE_GAP_PX)
                 oy = title_h - th - pack - int(bbox[1])
                 if oy < -int(bbox[1]):
                     oy = -int(bbox[1])
             else:
-                oy = (title_h - th) // 2 - int(bbox[1])
+                oy = y_off + (title_h - th) // 2 - int(bbox[1])
             draw.text((ox, oy), title, font=t_font, fill=_ui_text_rgba())
 
     # Small lines (artist / album) — set in Sharp Sans Book at the line-box
@@ -504,12 +553,12 @@ def render_ui_music_text_patch_bgra(
     if n_small > 0 and per_small_h > 0:
         shared_font = _font_for_height(small_font_path, per_small_h)
         if shared_font is not None:
-            if subtitle_top_frac is not None:
+            if subtitle_top_frac is not None and not vcenter:
                 # TOP of first small line sits exactly at sub_top; subsequent
                 # lines stack with gap_small between them.
                 y_cursor = title_h
             else:
-                y_cursor = title_h + gap_between
+                y_cursor = y_off + (title_h if title else 0) + gap_between
             for i, s in enumerate(small_lines):
                 disp = _ellipsize_to_width(s, shared_font, inner_w)
                 tw, th, bbox = _measure(shared_font, disp)
