@@ -58,7 +58,7 @@ WORKDIR="$(mktemp -d /tmp/pigeon-update.XXXXXX)"
 trap 'rm -rf "${WORKDIR}"' EXIT
 
 curl -fsSL -o "${WORKDIR}/pigeon.zip" "${ZIP_URL}"
-python3 - <<'PY' "${WORKDIR}/pigeon.zip" "${WORKDIR}/extract" "${APP_REL}"
+python3 - <<'PY' "${WORKDIR}/pigeon.zip" "${WORKDIR}/extract" "${APP_REL}" || { echo "pigeon-update ERROR: archive extraction failed or was rejected as unsafe" >&2; exit 1; }
 import sys
 import zipfile
 from pathlib import Path
@@ -66,12 +66,31 @@ from pathlib import Path
 zip_path, out, app_rel = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
 marker = app_rel.rstrip("/") + "/"
 out.mkdir(parents=True, exist_ok=True)
+root = out.resolve()
+
+
+def safe_target(member_name):
+    """Resolve a ZIP member under root; refuse anything that escapes it
+    (``../`` segments, absolute paths, backslash tricks)."""
+    if "\\" in member_name or member_name.startswith("/"):
+        return None
+    target = (root / member_name).resolve()
+    if target == root or root not in target.parents:
+        return None
+    return target
+
+
 with zipfile.ZipFile(zip_path) as zf:
+    # Validate every member before writing anything, so a crafted archive
+    # cannot leave a partial extraction behind.
+    for info in zf.infolist():
+        if safe_target(info.filename) is None:
+            sys.exit(f"unsafe path in update archive: {info.filename!r}")
     for info in zf.infolist():
         name = info.filename
         if marker not in name:
             continue
-        target = out / name
+        target = safe_target(name)
         if info.is_dir() or name.endswith("/"):
             target.mkdir(parents=True, exist_ok=True)
             continue
@@ -80,7 +99,7 @@ with zipfile.ZipFile(zip_path) as zf:
             dst.write(src.read())
         # zipfile does not restore Unix modes; keep +x so rsync -a does not
         # strip it from installed launchers (systemd execs them directly).
-        mode = (info.external_attr >> 16) & 0o7777
+        mode = (info.external_attr >> 16) & 0o777  # no setuid/setgid/sticky
         if mode:
             target.chmod(mode)
 PY
