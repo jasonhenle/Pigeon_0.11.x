@@ -15,7 +15,7 @@ from pathlib import Path
 from pigeon.version import version_string, version_tuple
 
 _DEFAULT_GITHUB_USER = "jasonhenle"
-_DEFAULT_GITHUB_REPO = "PigeonOS_0.10"
+_DEFAULT_GITHUB_REPO = "Pigeon_0.11.x"
 _DEFAULT_GITHUB_BRANCH = "main"
 _DEFAULT_VERSION_PATHS: tuple[str, ...] = (
     "PigeonOS_0.11_Development/Pigeon/pigeonSystem/pigeon/version.py",
@@ -191,7 +191,7 @@ def _github_repo_name() -> str:
 
 
 def _github_repo_is_public() -> bool:
-    return _github_repo_name() == "PigeonOS_0.10"
+    return _github_repo_name() in {"Pigeon_0.11.x", "PigeonOS_0.10"}
 
 
 def github_token() -> str:

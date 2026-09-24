@@ -31,7 +31,7 @@ _UA = "Pigeon/0.11 (github-update)"
 _SHELL_UPDATE_SCRIPT = "pigeon_github_update.sh"
 _LEGACY_SHELL_UPDATE_SCRIPT = "pi_update_from_github.sh"
 _BOOTSTRAP_SCRIPT_RAW = (
-    "https://raw.githubusercontent.com/jasonhenle/PigeonOS_0.10/main/"
+    "https://raw.githubusercontent.com/jasonhenle/Pigeon_0.11.x/main/"
     "PigeonOS_0.11_Development/Pigeon/installer/pigeon_github_update.sh"
 )
 _LAUNCHER_NAMES = (
@@ -366,7 +366,7 @@ def github_zipball_url(*, branch: str) -> str:
     from pigeon.update_check import _ascii_only
 
     user = _ascii_only(os.environ.get("PIGEON_UPDATE_GITHUB_USER", "jasonhenle").strip())
-    repo = _ascii_only(os.environ.get("PIGEON_UPDATE_GITHUB_REPO", "PigeonOS_0.10").strip())
+    repo = _ascii_only(os.environ.get("PIGEON_UPDATE_GITHUB_REPO", "Pigeon_0.11.x").strip())
     br = _ascii_only(branch.strip())
     return f"https://codeload.github.com/{user}/{repo}/zip/refs/heads/{br}"
 
@@ -780,7 +780,7 @@ def apply_github_update(
             "On Raspberry Pi, run once from a terminal:\n"
             "  rm -f ~/.pigeon_0_6/github_update_token\n"
             "  curl -fsSL -o /tmp/pigeon-install.sh \\\n"
-            '    "https://raw.githubusercontent.com/jasonhenle/PigeonOS_0.10/main/'
+            '    "https://raw.githubusercontent.com/jasonhenle/Pigeon_0.11.x/main/'
             'PigeonOS_0.11_Development/Pigeon/installer/install_from_github.sh"\n'
             "  bash /tmp/pigeon-install.sh\n\n"
             f"{e}",

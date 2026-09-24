@@ -146,7 +146,7 @@ def fetch_missing_assets_from_github(
 
     br = _ascii_only((branch or _branch_candidates()[0]).strip())
     user = _ascii_only(os.environ.get("PIGEON_UPDATE_GITHUB_USER", "jasonhenle").strip())
-    repo = _ascii_only(os.environ.get("PIGEON_UPDATE_GITHUB_REPO", "PigeonOS_0.10").strip())
+    repo = _ascii_only(os.environ.get("PIGEON_UPDATE_GITHUB_REPO", "Pigeon_0.11.x").strip())
     headers = github_auth_headers(user_agent=_UA)
     install_root = install_root.resolve()
 

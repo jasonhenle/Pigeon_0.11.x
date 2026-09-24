@@ -116,8 +116,8 @@ Do **not** delete `experiment` — keep using it for the next round.
 ### 4. Verify
 
 ```bash
-gh api repos/jasonhenle/PigeonOS_0.10/commits/main --jq '.sha[0:7]'
-curl -s "https://raw.githubusercontent.com/jasonhenle/PigeonOS_0.10/main/PigeonOS_0.11_Development/Pigeon/pigeonSystem/pigeon/version.py" | grep PATCH
+gh api repos/jasonhenle/Pigeon_0.11.x/commits/main --jq '.sha[0:7]'
+curl -s "https://raw.githubusercontent.com/jasonhenle/Pigeon_0.11.x/main/PigeonOS_0.11_Development/Pigeon/pigeonSystem/pigeon/version.py" | grep PATCH
 ```
 
 Open Pigeon → Settings → **Check for updates**. You should see a newer version than the one installed.

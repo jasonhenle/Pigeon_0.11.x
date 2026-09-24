@@ -9,7 +9,7 @@ import urllib.error
 import urllib.request
 
 _DEFAULT_USER = "jasonhenle"
-_DEFAULT_REPO = "PigeonOS_0.10"
+_DEFAULT_REPO = "Pigeon_0.11.x"
 _PI_TARBALL_RE = re.compile(r"^pigeon_[0-9]+\.[0-9]+\.[0-9]+_raspberry_pi\.tar\.gz$")
 
 

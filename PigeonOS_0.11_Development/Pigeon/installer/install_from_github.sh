@@ -10,7 +10,7 @@
 #   PIGEON_INSTALL_DIR=~/Apps/Pigeon bash install_from_github.sh
 set -euo pipefail
 
-REPO="${PIGEON_UPDATE_GITHUB_USER:-jasonhenle}/${PIGEON_UPDATE_GITHUB_REPO:-PigeonOS_0.10}"
+REPO="${PIGEON_UPDATE_GITHUB_USER:-jasonhenle}/${PIGEON_UPDATE_GITHUB_REPO:-Pigeon_0.11.x}"
 BRANCH="${PIGEON_UPDATE_GITHUB_BRANCH:-main}"
 APP_PREFIX="PigeonOS_0.11_Development/Pigeon"
 INSTALL_DIR="${PIGEON_INSTALL_DIR:-}"
