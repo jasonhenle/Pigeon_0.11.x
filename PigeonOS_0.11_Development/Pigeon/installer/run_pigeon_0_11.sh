@@ -111,12 +111,30 @@ fi
   exit 1
 }
 
-"$PY" -m pip install --upgrade pip >/dev/null
 REQ_FILE="${SYSTEM_DIR}/requirements.txt"
 if [[ "$(uname -s)" == "Linux" && -f "${SYSTEM_DIR}/requirements-pi.txt" ]]; then
   REQ_FILE="${SYSTEM_DIR}/requirements-pi.txt"
 fi
-"$PY" -m pip install -r "${REQ_FILE}"
+# Only run pip when the requirements file (or the venv's Python) changed since the last
+# successful install. Re-checking every package on each launch cost ~10 s per boot on a
+# Pi 4, and "pip install --upgrade pip" needs the network, so an offline boot used to fail.
+# Installers/updaters pass --bootstrap-only, which always runs pip; PIGEON_FORCE_PIP=1 forces it too.
+REQ_STAMP="${SYSTEM_DIR}/.venv/.pigeon-requirements.stamp"
+REQ_SIG="$("$PY" -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest(), sys.version.split()[0])' "${REQ_FILE}" 2>/dev/null || true)"
+if [[ "${1:-}" == "--bootstrap-only" || -n "${PIGEON_FORCE_PIP:-}" || -z "${REQ_SIG}" \
+  || ! -f "${REQ_STAMP}" || "$(cat "${REQ_STAMP}" 2>/dev/null || true)" != "${REQ_SIG}" ]]; then
+  "$PY" -m pip install --upgrade pip >/dev/null || echo "pigeon: pip self-upgrade skipped (offline?)" >&2
+  if "$PY" -m pip install -r "${REQ_FILE}"; then
+    if [[ -n "${REQ_SIG}" ]]; then
+      printf '%s\n' "${REQ_SIG}" > "${REQ_STAMP}" || true
+    fi
+  elif [[ -f "${REQ_STAMP}" && "${1:-}" != "--bootstrap-only" ]]; then
+    echo "pigeon: pip install failed; starting with the existing Python environment." >&2
+  else
+    echo "pigeon: pip install -r ${REQ_FILE} failed." >&2
+    exit 1
+  fi
+fi
 
 if [[ "${1:-}" == "--bootstrap-only" ]]; then
   echo "pigeon: python environment ready." >&2

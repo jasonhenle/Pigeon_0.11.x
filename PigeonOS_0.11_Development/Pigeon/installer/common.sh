@@ -75,6 +75,43 @@ pigeon_install_bundled_fonts() {
   fi
 }
 
+# Disable pigeon.service drop-ins that pin ExecStart/WorkingDirectory to an old install.
+# systemd applies /etc/systemd/system/pigeon.service.d/*.conf *after* the main unit, so a
+# leftover "ExecStart=" override (e.g. from 0.10) silently keeps launching the old folder
+# even though pigeon.service was rewritten. Environment-only drop-ins (display/PAR) are kept.
+# Stale files are renamed to *.conf.disabled-<timestamp> (systemd ignores them; easy to restore).
+# Usage: pigeon_disable_stale_service_dropins <install_dir> [sudo-prefix...]
+pigeon_disable_stale_service_dropins() {
+  local install_dir="${1:-}"
+  shift || true
+  local dropin_dir="${PIGEON_SYSTEMD_DROPIN_DIR:-/etc/systemd/system/pigeon.service.d}"
+  local f stamp dir_re changed=0
+  [[ -n "${install_dir}" && -d "${dropin_dir}" ]] || return 0
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  # install_dir as a regex, matched only as a whole path component (…/Pigeon_0.11.3 ≠ …/Pigeon_0.11.31).
+  dir_re="$(printf '%s' "${install_dir%/}" | sed 's/[][\.*^$|+?(){}]/\\&/g')"
+  for f in "${dropin_dir}"/*.conf; do
+    [[ -f "${f}" ]] || continue
+    grep -qE '^[[:space:]]*(ExecStart|WorkingDirectory)[[:space:]]*=' "${f}" 2>/dev/null || continue
+    # Keep an override that already targets this install (someone customised it on purpose).
+    if grep -E '^[[:space:]]*(ExecStart|WorkingDirectory)[[:space:]]*=' "${f}" \
+      | grep -vE '=[[:space:]]*$' \
+      | grep -qvE "=[[:space:]]*[-@+!:]*${dir_re}(/|[[:space:]]|\$)"; then
+      if "$@" mv -f "${f}" "${f}.disabled-${stamp}" 2>/dev/null; then
+        echo "pigeon: disabled stale systemd override ${f} (renamed to ${f##*/}.disabled-${stamp})"
+        changed=1
+      else
+        echo "pigeon: WARNING ${f} overrides ExecStart/WorkingDirectory and will keep launching an old Pigeon." >&2
+        echo "pigeon:   fix with: sudo mv '${f}' '${f}.disabled' && sudo systemctl daemon-reload && sudo systemctl restart pigeon" >&2
+      fi
+    fi
+  done
+  if [[ "${changed}" -eq 1 ]]; then
+    "$@" systemctl daemon-reload 2>/dev/null || true
+  fi
+  return 0
+}
+
 # Passwordless ``systemctl restart pigeon`` for in-app GitHub updates (Pi autostart).
 # Rewrite an existing Pi autostart unit to launch run_pigeon_0_11.sh (legacy -> 0.11 migration).
 pigeon_refresh_systemd_service() {
@@ -86,6 +123,9 @@ pigeon_refresh_systemd_service() {
   if [[ -z "${install_dir}" || ! -f "${template}" || ! -f "${service}" ]]; then
     return 0
   fi
+  # In-app updates only have passwordless sudo for "systemctl restart"; this warns
+  # (with the fix command) when it cannot rename a stale override itself.
+  pigeon_disable_stale_service_dropins "${install_dir}" sudo -n
   if grep -qE "run_pigeon_0_11\\.sh|run_pigeon_0_10\\.sh" "${service}" 2>/dev/null; then
     return 0
   fi

@@ -394,6 +394,17 @@ def _linux_curl_get_simple(url: str, *, timeout_s: float) -> bytes | None:
     return None
 
 
+_CURL_HTTP_STATUS_RE = re.compile(r"returned error:\s*(\d{3})")
+
+
+def _classify_fetch_error(message: str) -> str:
+    """Normalise curl failures: ``curl -f`` reports a 404 as exit 22 text, not an HTTPError."""
+    m = _CURL_HTTP_STATUS_RE.search(message or "")
+    if m:
+        return f"HTTP {m.group(1)}"
+    return (message or "").strip() or "unknown error"
+
+
 def _fetch_version_text(
     url: str,
     *,
@@ -422,7 +433,7 @@ def _fetch_version_text(
     except urllib.error.URLError as e:
         return None, f"Network error: {e.reason}"
     except OSError as e:
-        return None, str(e)
+        return None, _classify_fetch_error(str(e))
 
 
 def fetch_remote_version_tuple(
@@ -438,6 +449,7 @@ def fetch_remote_version_tuple(
     token = github_token()
     saw_404 = False
     saw_auth_fail = False
+    last_error: str | None = None
     best: tuple[int, int, int] | None = None
     best_url: str | None = None
     best_branch: str | None = None
@@ -467,6 +479,8 @@ def fetch_remote_version_tuple(
                         saw_404 = True
                     elif err in ("HTTP 401", "HTTP 403"):
                         saw_auth_fail = True
+                    elif err:
+                        last_error = err
                     continue
                 remote = parse_version_py(body)
                 if remote is None:
@@ -477,7 +491,7 @@ def fetch_remote_version_tuple(
                     best_branch = branch
     if best is not None:
         return best, None, best_url, best_branch
-    if not token and saw_404:
+    if not token and saw_404 and not _github_repo_is_public():
         return None, _private_repo_hint(), version_py_raw_url(), None
     if saw_auth_fail:
         return (
@@ -490,12 +504,17 @@ def fetch_remote_version_tuple(
     if saw_404:
         return (
             None,
-            "version.py was not found on GitHub for branch "
-            f"{_branch_candidates()[0]!r}. Push the latest code to main.",
+            f"version.py was not found on GitHub ({github_repo_url()}, branch "
+            f"{_branch_candidates()[0]!r}). Push the latest code to main, or "
+            "reinstall if this Pi still points at an old repo.",
             version_py_raw_url(),
             None,
         )
-    return None, "Could not reach GitHub to check for updates.", version_py_raw_url(), None
+    msg = "Could not reach GitHub to check for updates."
+    if last_error:
+        # e.g. "curl: (6) Could not resolve host" / "(28) Operation timed out" / SSL errors.
+        msg = f"{msg}\n\n{last_error[:300]}"
+    return None, msg, version_py_raw_url(), None
 
 
 def parse_version_py(text: str) -> tuple[int, int, int] | None:

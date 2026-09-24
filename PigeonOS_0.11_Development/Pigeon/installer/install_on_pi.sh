@@ -192,6 +192,7 @@ if [[ "${ENABLE_AUTOSTART}" -eq 1 ]] && command -v systemctl >/dev/null 2>&1; th
     -e "s|@PIGEON_DIR@|${INSTALL_DIR}|g" \
     -e "s|@PIGEON_VERSION@|${VERSION}|g" \
     "${INSTALLER_DIR}/pigeon.service" > "${SERVICE_PATH}"
+  pigeon_disable_stale_service_dropins "${INSTALL_DIR}"
   systemctl daemon-reload
   systemctl enable pigeon.service
   pigeon_install_systemd_restart_sudoers "${INSTALL_USER}" || true
