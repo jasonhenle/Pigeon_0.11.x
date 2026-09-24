@@ -7,7 +7,7 @@ set -euo pipefail
 SOURCE_BRANCH="${PIGEON_SHIP_SOURCE_BRANCH:-experiment}"
 TARGET_BRANCH="main"
 DO_MERGE=0
-REPO="jasonhenle/Pigeon_0.11.x"
+REPO="jasonhenle/pigeon_OS_0.11.x_JEH"
 VERSION_REL="PigeonOS_0.11_Development/Pigeon/pigeonSystem/pigeon/version.py"
 
 usage() {

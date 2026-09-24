@@ -17,8 +17,8 @@ Then use Run-Pigeon on your Desktop to launch Pigeon.
 
 In-app updates
 --------------
-Settings → Updates pulls from https://github.com/jasonhenle/Pigeon_0.11.x (branch main).
-Fresh installs: https://github.com/jasonhenle/Pigeon_0.11.x/releases or
+Settings → Updates pulls from https://github.com/jasonhenle/pigeon_OS_0.11.x_JEH (branch main).
+Fresh installs: https://github.com/jasonhenle/pigeon_OS_0.11.x_JEH/releases or
   bash installer/install_from_github.sh
 See GITHUB.md for details.
 

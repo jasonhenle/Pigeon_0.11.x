@@ -10,15 +10,15 @@ On the Pi (Terminal):
 
 ```bash
 curl -fsSL -o /tmp/pigeon-install.sh \
-  "https://raw.githubusercontent.com/jasonhenle/Pigeon_0.11.x/main/PigeonOS_0.11_Development/Pigeon/installer/install_from_github.sh"
+  "https://raw.githubusercontent.com/jasonhenle/pigeon_OS_0.11.x_JEH/main/PigeonOS_0.11_Development/Pigeon/installer/install_from_github.sh"
 bash /tmp/pigeon-install.sh
 ```
 
-This downloads the latest **[GitHub Release](https://github.com/jasonhenle/Pigeon_0.11.x/releases)** tarball (full app + `pigeonAssets/`) and runs the installer. If no release exists yet, it uses the main-branch zip instead.
+This downloads the latest **[GitHub Release](https://github.com/jasonhenle/pigeon_OS_0.11.x_JEH/releases)** tarball (full app + `pigeonAssets/`) and runs the installer. If no release exists yet, it uses the main-branch zip instead.
 
 **Desktop alternative:**
 
-1. Open https://github.com/jasonhenle/Pigeon_0.11.x/releases
+1. Open https://github.com/jasonhenle/pigeon_OS_0.11.x_JEH/releases
 2. Download `pigeon_<version>_raspberry_pi.tar.gz`
 3. Extract → open `Pigeon_<version>/installer/` → double-click **Install-Pigeon**  
    (see `installer/START-HERE.txt`)

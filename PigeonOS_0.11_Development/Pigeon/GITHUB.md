@@ -1,6 +1,6 @@
 # Pigeon and GitHub
 
-Repository: **https://github.com/jasonhenle/Pigeon_0.11.x**  
+Repository: **https://github.com/jasonhenle/pigeon_OS_0.11.x_JEH**  
 Default branch: **`main`**
 
 **GitHub is the canonical source for Pigeon.** The full app (code, `pigeonAssets/`, installers) lives in this repo. Fresh installs and in-app updates both use it. You do **not** need a Mac to download or package Pigeon.
@@ -15,20 +15,20 @@ Pigeon splits **app files** (this repo) from **your settings** (`~/.pigeon_0_6/`
 
 ```bash
 curl -fsSL -o /tmp/pigeon-install.sh \
-  "https://raw.githubusercontent.com/jasonhenle/Pigeon_0.11.x/main/PigeonOS_0.11_Development/Pigeon/installer/install_from_github.sh"
+  "https://raw.githubusercontent.com/jasonhenle/pigeon_OS_0.11.x_JEH/main/PigeonOS_0.11_Development/Pigeon/installer/install_from_github.sh"
 bash /tmp/pigeon-install.sh
 ```
 
 | Platform | What the script does |
 |----------|----------------------|
-| **Raspberry Pi / Linux** | Downloads the latest **[GitHub Release](https://github.com/jasonhenle/Pigeon_0.11.x/releases)** tarball (`pigeon_*_raspberry_pi.tar.gz`, includes all assets). If no release exists yet, falls back to the main-branch zip (same content as Updates). Runs `installer/install_on_pi.sh`. |
+| **Raspberry Pi / Linux** | Downloads the latest **[GitHub Release](https://github.com/jasonhenle/pigeon_OS_0.11.x_JEH/releases)** tarball (`pigeon_*_raspberry_pi.tar.gz`, includes all assets). If no release exists yet, falls back to the main-branch zip (same content as Updates). Runs `installer/install_on_pi.sh`. |
 | **macOS** | Downloads main-branch zip and runs `installer/install_pigeon.sh`. |
 
 Optional: `bash /tmp/pigeon-install.sh --dir "$HOME/MyPigeon"` or `--in-place` (Pi, install inside extracted folder).
 
 ### Alternative — GitHub Releases (Pi)
 
-1. Open **https://github.com/jasonhenle/Pigeon_0.11.x/releases**
+1. Open **https://github.com/jasonhenle/pigeon_OS_0.11.x_JEH/releases**
 2. Download `pigeon_<version>_raspberry_pi.tar.gz`
 3. Extract, open `Pigeon_<version>/installer/`, double-click **Install-Pigeon** (see `START-HERE.txt`)
 
@@ -36,14 +36,14 @@ Releases are built automatically when `pigeonSystem/pigeon/version.py` changes o
 
 ### Alternative — ZIP or git (any platform)
 
-**ZIP:** https://github.com/jasonhenle/Pigeon_0.11.x/archive/refs/heads/main.zip  
+**ZIP:** https://github.com/jasonhenle/pigeon_OS_0.11.x_JEH/archive/refs/heads/main.zip  
 Then go to **`PigeonOS_0.11_Development/Pigeon/`** inside the extracted folder and run the installer for your platform.
 
 **Clone:**
 
 ```bash
-git clone https://github.com/jasonhenle/Pigeon_0.11.x.git
-cd Pigeon_0.11.x/PigeonOS_0.11_Development/Pigeon
+git clone https://github.com/jasonhenle/pigeon_OS_0.11.x_JEH.git
+cd pigeon_OS_0.11.x_JEH/PigeonOS_0.11_Development/Pigeon
 ./installer/install_pigeon.sh          # Mac
 ./installer/install_on_pi.sh           # Pi / Linux
 ```
@@ -83,7 +83,7 @@ Quit and relaunch when prompted.
 
 ### Optional GitHub token
 
-`jasonhenle/Pigeon_0.11.x` is **public** — no token required.
+`jasonhenle/pigeon_OS_0.11.x_JEH` is **public** — no token required.
 
 For a private fork: `~/.pigeon_0_6/github_update_token` or `PIGEON_UPDATE_GITHUB_TOKEN`.
 
@@ -104,7 +104,7 @@ You can also run **`raspberryPi/package_for_pi.sh`** locally; tarballs in `raspb
 | Variable | Purpose |
 |----------|---------|
 | `PIGEON_UPDATE_GITHUB_USER` | Default `jasonhenle` |
-| `PIGEON_UPDATE_GITHUB_REPO` | Default `Pigeon_0.11.x` |
+| `PIGEON_UPDATE_GITHUB_REPO` | Default `pigeon_OS_0.11.x_JEH` |
 | `PIGEON_UPDATE_GITHUB_BRANCH` | Branch for version check and zip download (default `main`) |
 | `PIGEON_UPDATE_GITHUB_TOKEN` | Optional GitHub PAT |
 | `PIGEON_STATE_DIR` | Settings directory (default `~/.pigeon_0_6`) |

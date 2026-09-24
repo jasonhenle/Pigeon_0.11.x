@@ -9,7 +9,7 @@
 # Requires: curl, unzip or python3, rsync (install via apt if missing).
 set -euo pipefail
 
-REPO="${PIGEON_UPDATE_GITHUB_USER:-jasonhenle}/${PIGEON_UPDATE_GITHUB_REPO:-Pigeon_0.11.x}"
+REPO="${PIGEON_UPDATE_GITHUB_USER:-jasonhenle}/${PIGEON_UPDATE_GITHUB_REPO:-pigeon_OS_0.11.x_JEH}"
 BRANCH="${PIGEON_UPDATE_GITHUB_BRANCH:-main}"
 ZIP_URL="https://codeload.github.com/${REPO}/zip/refs/heads/${BRANCH}"
 APP_REL="PigeonOS_0.11_Development/Pigeon"

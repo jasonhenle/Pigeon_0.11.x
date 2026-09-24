@@ -149,7 +149,7 @@ Env: `PIGEON_ROTARY_SERIAL=0` disables; `PIGEON_ADB_SERIAL` selects ADB device; 
 | User settings | `~/.pigeon_0_6/` |
 | Install root on Pi (typical) | `~/Pigeon_0.7.23/` (legacy folder name on device) |
 | Dev app root | `PigeonOS_0.11_Development/Pigeon/` |
-| GitHub repo | `jasonhenle/Pigeon_0.11.x` |
+| GitHub repo | `jasonhenle/pigeon_OS_0.11.x_JEH` |
 
 ## Versioning
 
